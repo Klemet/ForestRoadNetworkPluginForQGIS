@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+
 """
 /***************************************************************************
  ForestRoads
@@ -22,25 +23,46 @@
  *   (at your option) any later version.                                   *
  *                                                                         *
  ***************************************************************************/
- This script initializes the plugin, making it known to QGIS.
+ This script allows QGIS to load or unload the plugin when needed.
 """
 
 __author__ = 'clem.hardy@outlook.fr'
 __date__ = 'Currently in work'
 __copyright__ = '(C) 2019 by Clement Hardy'
 
+import os
+import sys
+import inspect
 
-# noinspection PyPep8Naming
-# The classFactory function is read by QGIS to load the plugin.
-def classFactory(iface):  # pylint: disable=invalid-name
-    """Load LeastCostPath class from file LeastCostPath.
+# We import the functions from QGIS necessary to feed him
+# the functioning of the plugin.
+from qgis.core import QgsProcessingAlgorithm, QgsApplication
+from .forestRoadNetworkPlugin_provider import forestRoadNetworkProvider
 
-    :param iface: A QGIS interface instance.
-    :type iface: QgsInterface
-    """
-    #
-    # The function will return our plugin, which contains two
-    # functions that QGIS can launch : initGUI and unload, both
-    # need to load or unload the plugin. See forestRoadNetworkPlugin.py
-    from .forestRoadNetworkPlugin import forestRoadNetworkPlugin
-    return forestRoadNetworkPlugin()
+# These commands seem to get the path where the plugin is executed
+# from, and add it to the list of path called sys.path where python
+# will look for modules to load. Allows the loading of other modules.
+# inspect.getfile(inspect.currentframe()) gets the path of the file being
+# executed.
+# os.path.split allows to split the path between a head (path to folder)
+# and a tail (the file name). By using the item 0, we take only the head
+# (Path to folder)
+cmd_folder = os.path.split(inspect.getfile(inspect.currentframe()))[0]
+
+if cmd_folder not in sys.path:
+    sys.path.insert(0, cmd_folder)
+
+# Class that is fed to QGIS via the classFactory function in
+# the __init__.py file. Has two functions that QGIS can call :
+# one to initialize Gui, and one to unload. One adds a provider,
+# the other removes it.
+class forestRoadNetworkPlugin(object):
+
+    def __init__(self):
+        self.provider = forestRoadNetworkProvider()
+
+    def initGui(self):
+        QgsApplication.processingRegistry().addProvider(self.provider)
+
+    def unload(self):
+        QgsApplication.processingRegistry().removeProvider(self.provider)
