@@ -239,14 +239,18 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         # in rows and colons).
         start_features = list(polygons_to_connect.getFeatures())
         # feedback.pushInfo(str(len(start_features)))
+        # We make a dictionary of nodes. For a given row/column tuple, it associate a pointXY in QGIS format.
         start_row_cols_dict = MinCostPathHelper.features_to_row_cols(start_features, cost_raster)
+        # If there are no
         if len(start_row_cols_dict) == 0:
             raise QgsProcessingException(self.tr("ERROR: The start-point layer contains no legal point."))
         elif len(start_row_cols_dict) >= 2:
             raise QgsProcessingException(self.tr("ERROR: The start-point layer contains more than one legal point."))
+        # we take only the first point of the departure points (the first entry in our dictionnary)
         start_row_col = list(start_row_cols_dict.keys())[0]
 
-        end_features = list(end_source.getFeatures())
+        # Same dictionnary for the end points.
+        end_features = list(current_roads.getFeatures())
         # feedback.pushInfo(str(len(end_features)))
         end_row_cols_dict = MinCostPathHelper.features_to_row_cols(end_features, cost_raster)
         if len(end_row_cols_dict) == 0:
