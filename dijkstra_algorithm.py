@@ -100,17 +100,27 @@ def dijkstra(start_row_col, end_row_cols, block, feedback=None):
 
     # We create the grid object containing the values of the cost raster
     grid = Grid(block)
-    #
+    # We create a set of nodes to reach (multiple goal possible)
     end_row_cols = set(end_row_cols)
+    # We create a list of nodes to reach for feedback purposes
     end_row_col_list = list(end_row_cols)
 
+    # We create a priority Queue which contains the nodes that are opened but
+    # not closed (see functioning of dijkstra algorithm; nodes are opened to
+    # initialize their remaining distance, then closed)
     frontier = queue.PriorityQueue()
+    # In the frontier, we put tuples containing distance from start, and the node)
     frontier.put((0, start_row_col))
+    # We initialize a dictionary of predecessors. For a given node, we'll know
+    # which node is his predecessor.
     came_from = {}
+    # A dictionary to know what is the distance from a given node to the start.
     cost_so_far = {}
 
+    # If the starting node is invalid, we return nothing
     if not grid.is_valid(start_row_col):
         return None, None, None
+    # If the starting node is also an ending node, we return nothing
     if start_row_col in end_row_cols:
         return None, None, None
 
@@ -119,44 +129,79 @@ def dijkstra(start_row_col, end_row_cols, block, feedback=None):
     min_manhattan = total_manhattan
     feedback.setProgress(100 * (1 - min_manhattan / total_manhattan))
 
+    # We initialize the beginning of the loop
     came_from[start_row_col] = None
     cost_so_far[start_row_col] = 0
-
     current_node = None
+
+    # We launch the loop. It will end when there are no more cell to
+    # check (impossible to reach an end node), or will be broken when
+    # a end node is reached
     while not frontier.empty():
+        # We get the node with the smallest distance to start
+        # First node will be the start node, of course
+        # By using this function, the current node is removed
+        # from the frontier.
         current_cost, current_node = frontier.get()
 
-        # update the progress bar
+        # update the progress bar if feedback is activated.
         if feedback:
+            # The algorithm is canceled if users told it to feedback.
             if feedback.isCanceled():
                 return None, None, None
+            # Else, feedback is based on the minimum manhattan distance reached by the algorithm
+            # between a node that was opened and a random end goal.
             curr_manhattan = grid.manhattan_distance(current_node, random.choice(end_row_col_list))
             if curr_manhattan < min_manhattan:
                 min_manhattan = curr_manhattan
                 feedback.setProgress(100 * (1 - min_manhattan / total_manhattan))
 
+        # We break the loop if the current node is a goal to reach
         if current_node in end_row_cols:
             break
 
+        # If not, we look at each neighbour of the node
         for nex in grid.neighbors(current_node):
+            # We calculate the distance to goal from this neighbour (which is the one
+            # from the current node + the move from current node to neighbour)
             new_cost = cost_so_far[current_node] + grid.simple_cost(current_node, nex)
+            # If the neighbour is not in the dictionary of opened nodes, or if
+            # the cost of passing by this neighbour is cheaper than the previous
+            # predecessor that this node had
             if nex not in cost_so_far or new_cost < cost_so_far[nex]:
+                # We put the current node as predecessor of this neighbour,
+                # we put the neighbour in the frontier, and we register
+                # the cost to start
                 cost_so_far[nex] = new_cost
                 frontier.put((new_cost, nex))
                 came_from[nex] = current_node
 
+
+    # When the loop ends, if we did indeed found an end goal :
     if current_node in end_row_cols:
+        # We calculate the cost from this end goal to the start
         end_node = current_node
         least_cost = cost_so_far[current_node]
+        # We initialize the path object that we are going to return : it is a list.
+        # We also make a list of costs.
         path = []
         costs = []
+        # From the end node, we add the current node,
+        # we register the cost to go to it from the goal,
+        # and we take the predecessor as the current node.
+        # We stop when there are no more predecessors
+        # (meaning current node = starting node)
         while current_node is not None:
             path.append(current_node)
             costs.append(cost_so_far[current_node])
             current_node = came_from[current_node]
 
+        # We reverse the order of the list to start from the start
         path.reverse()
         costs.reverse()
+        # We return the path
         return path, costs, end_node
+    # If we did not reached a end goal, it was unreachable.
+    # We return nothing.
     else:
         return None, None, None
