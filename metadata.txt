@@ -7,17 +7,19 @@
 # This file should be included when you package your plugin.# Mandatory items:
 
 [general]
-name=Least-Cost Path
+name=Forest Road Network
 qgisMinimumVersion=3.0
-description=Find the least cost path with given cost raster and points
-version=0.2
-author=FlowMap Group@SESS.PKU
-email=xurigong@gmail.com
+description= Create a network of forest roads based on zones to access, roads to connect
+ them to, and a cost matrix.
+version=0.01
+author=Clément Hardy
+email=clem.hardy@outlook.fr
 
-about=This plugin finds the least cost path with given cost raster and points.
+about=Create a network of forest roads based on zones to access, roads to connect
+ them to, and a cost matrix.
 
-tracker=https://github.com/Gooong/LeastCostPath/issues
-repository=https://github.com/Gooong/LeastCostPath
+tracker=https://github.com/Klemet/ForestRoadNetworkPluginForQGIS/issues
+repository=https://github.com/Klemet/ForestRoadNetworkPluginForQGIS
 # End of mandatory metadata
 
 # Recommended items:
@@ -28,11 +30,11 @@ repository=https://github.com/Gooong/LeastCostPath
 # Tags are comma separated with spaces allowed
 tags=least cost path distance raster analysis road
 
-homepage=https://github.com/Gooong/LeastCostPath
+homepage=https://github.com/Klemet/ForestRoadNetworkPluginForQGIS
 category=Analysis
 icon=icon.png
 # experimental flag
-experimental=False
+experimental=true
 
 # deprecated flag (applies to the whole plugin, not just a single version)
 deprecated=False

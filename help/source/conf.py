@@ -40,7 +40,7 @@ source_suffix = '.rst'
 master_doc = 'index'
 
 # General information about the project.
-project = u'LeastCostPath'
+project = u'ForestRoadNetwork'
 copyright = u'2013, FlowMap Group@SESS.PKU'
 
 # The version info for the project you're documenting, acts as replacement for
@@ -178,8 +178,8 @@ htmlhelp_basename = 'TemplateClassdoc'
 # Grouping the document tree into LaTeX files. List of tuples
 # (source start file, target name, title, author, documentclass [howto/manual]).
 latex_documents = [
-  ('index', 'LeastCostPath.tex', u'LeastCostPath Documentation',
-   u'FlowMap Group@SESS.PKU', 'manual'),
+  ('index', 'ForestRoadNetwork.tex', u'ForestRoadNetwork Documentation',
+   u'clem.hardy@outlook.fr', 'manual'),
 ]
 
 # The name of an image file (relative to this directory) to place at the top of
@@ -211,6 +211,6 @@ latex_documents = [
 # One entry per manual page. List of tuples
 # (source start file, name, description, authors, manual section).
 man_pages = [
-    ('index', 'TemplateClass', u'LeastCostPath Documentation',
-     [u'FlowMap Group@SESS.PKU'], 1)
+    ('index', 'TemplateClass', u'ForestRoadNetwork Documentation',
+     [u'clem.hardy@outlook.fr'], 1)
 ]
