@@ -241,7 +241,7 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         # feedback.pushInfo(str(len(start_features)))
         # We make a dictionary of nodes. For a given row/column tuple, it associate a pointXY in QGIS format.
         start_row_cols_dict = MinCostPathHelper.features_to_row_cols(start_features, cost_raster)
-        # If there are no
+        # If there are no starting points, or if their is more than one :
         if len(start_row_cols_dict) == 0:
             raise QgsProcessingException(self.tr("ERROR: The start-point layer contains no legal point."))
         elif len(start_row_cols_dict) >= 2:
@@ -253,6 +253,7 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         end_features = list(current_roads.getFeatures())
         # feedback.pushInfo(str(len(end_features)))
         end_row_cols_dict = MinCostPathHelper.features_to_row_cols(end_features, cost_raster)
+        # If there is no goal to reach, or if one overlaps with the starting point :
         if len(end_row_cols_dict) == 0:
             raise QgsProcessingException(self.tr("ERROR: The end-point layer contains no legal point."))
 
@@ -262,17 +263,27 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         # feedback.pushInfo(str(start_col_rows))
         # feedback.pushInfo(str(end_col_rows))
 
+        # We put the data of the raster into a variable that we will send to the algorithm.
         block = MinCostPathHelper.get_all_block(cost_raster, cost_raster_band)
+        # We transform the raster data into a matrix and check if the matrix contains negative values
         matrix, contains_negative = MinCostPathHelper.block2matrix(block)
+        # We display a feedback on the loading of the raster
         feedback.pushInfo(self.tr("The size of cost raster is: %d * %d") % (block.height(), block.width()))
 
+        # If there are negative values in the raster, we make an issue.
         if contains_negative:
             raise QgsProcessingException(self.tr("ERROR: Cost raster contains negative value."))
 
+        # Now, time to launch the algorithm properly !
         feedback.pushInfo(self.tr("Searching least cost path..."))
 
+        # From the algorithm, we get back a minimum cost path on the form of a list of nodes from start to goal,
+        # a list of accumulated cost for each step, and the node that was chosen for the ending.
         min_cost_path, costs, selected_end = dijkstra(start_row_col, end_row_cols, matrix, feedback)
         # feedback.pushInfo(str(min_cost_path))
+
+        # If there was a problem, we indicate if it's because the search was cancelled by the user
+        # or if there was no end point that could be reached.
         if min_cost_path is None:
             if feedback.isCanceled():
                 raise QgsProcessingException(self.tr("ERROR: Search canceled."))
@@ -281,17 +292,26 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         feedback.setProgress(100)
         feedback.pushInfo(self.tr("Search completed! Saving path..."))
 
+        # Time to save the path as a vector.
+        # We take the starting and ending points in our dictionaries as pointXY in QGIS format
         start_point = start_row_cols_dict[start_row_col]
         end_point = end_row_cols_dict[selected_end]
+        # We make a list of Qgs.pointXY from the nodes in our pathlist
         path_points = MinCostPathHelper.create_points_from_path(cost_raster, min_cost_path, start_point, end_point)
+        # If the user asked for informations about the cost on the line
         if output_linear_reference:
             # add linear reference
+            # To each point, we add the corresponding accumulated cost
             for point, cost in zip(path_points, costs):
                 point.addMValue(cost)
+        # With the total cost which is the last item in our accumulated cost list,
+        # we create the PolyLine that will be returned as a vector.
         total_cost = costs[-1]
         path_feature = MinCostPathHelper.create_path_feature_from_points(path_points, total_cost, sink_fields)
 
+        # Into the sink that serves as our output, we put the PolyLine
         sink.addFeature(path_feature, QgsFeatureSink.FastInsert)
+        # We return our output, that is linked to our sink.
         return {self.OUTPUT: dest_id}
 
     # Here are different functions used by QGIS to name and define the algorithm
@@ -403,6 +423,10 @@ class MinCostPathHelper:
         y = extent.yMaximum() - (row_col[0] + 0.5) * yres
         return QgsPoint(x, y)
 
+    # Function to return a list of Qgs.pointXY. Each point is made based on the center of the node
+    # that we get from the path list.
+    # At the end, we put the precise coordinates of the starting/ending nodes that were given by
+    # the user at the start.
     @staticmethod
     def create_points_from_path(cost_raster, min_cost_path, start_point, end_point):
         path_points = list(
@@ -423,6 +447,7 @@ class MinCostPathHelper:
         # We return the container with our field.
         return fields
 
+    # Function to create a polyline with the list of qgs.pointXY
     @staticmethod
     def create_path_feature_from_points(path_points, total_cost, fields):
         polyline = QgsGeometry.fromPolyline(path_points)
