@@ -150,13 +150,13 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
 
     # If the starting node is invalid, we return nothing
     if not grid.is_valid(start_row_col):
-        feedback.pushInfo("Starting node seems invalid (out of extent of raster or has no value on it)")
-        feedback.pushInfo("Starting node info (rowcol) : " + str(start_row_col))
-        feedback.pushInfo("Starting node info (coordinates) " + str(Grid._row_col_to_point(start_row_col, raster_layer)))
+        # feedback.pushInfo("Starting node seems invalid (out of extent of raster or has no value on it)")
+        # feedback.pushInfo("Starting node info (rowcol) : " + str(start_row_col))
+        # feedback.pushInfo("Starting node info (coordinates) " + str(Grid._row_col_to_point(start_row_col, raster_layer)))
         return None, None, None
     # If the starting node is also an ending node, we return nothing
     if start_row_col in end_row_cols:
-        feedback.pushInfo("Starting node seem to coincide with a ending node")
+        # feedback.pushInfo("Starting node seem to coincide with a ending node")
         return None, None, None
 
     # update the progress bar
@@ -168,7 +168,7 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
     came_from[start_row_col] = None
     cost_so_far[start_row_col] = 0
     current_node = None
-    feedback.pushInfo("Dijkstra loop initialized.")
+    # feedback.pushInfo("Dijkstra loop initialized.")
 
     # We launch the loop. It will end when there are no more cell to
     # check (impossible to reach an end node), or will be broken when
@@ -179,20 +179,14 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
         # By using this function, the current node is removed
         # from the frontier.
         current_cost, current_node = frontier.get()
-        feedback.pushInfo("Current node of the loop is " + str(current_node))
-        feedback.pushInfo("Current node corresponds to point " + str(Grid._row_col_to_point(current_node, raster_layer)))
+        # feedback.pushInfo("Current node of the loop is " + str(current_node))
+        # feedback.pushInfo("Current node corresponds to point " + str(Grid._row_col_to_point(current_node, raster_layer)))
 
         # update the progress bar if feedback is activated.
         if feedback:
             # The algorithm is canceled if users told it to feedback.
             if feedback.isCanceled():
                 return None, None, None
-            # Else, feedback is based on the minimum manhattan distance reached by the algorithm
-            # between a node that was opened and a random end goal.
-            curr_manhattan = grid.manhattan_distance(current_node, random.choice(end_row_col_list))
-            if curr_manhattan < min_manhattan:
-                min_manhattan = curr_manhattan
-                feedback.setProgress(100 * (1 - min_manhattan / total_manhattan))
 
         # We break the loop if the current node is a goal to reach
         if current_node in end_row_cols:
@@ -200,9 +194,9 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
 
         # If not, we look at each neighbour of the node
         for nex in grid.neighbors(current_node):
-            feedback.pushInfo("Neighbour investigated is " + str(nex))
-            feedback.pushInfo(
-                "Neighbour corresponds to point " + str(Grid._row_col_to_point(nex,raster_layer)))
+            # feedback.pushInfo("Neighbour investigated is " + str(nex))
+            # feedback.pushInfo(
+                # "Neighbour corresponds to point " + str(Grid._row_col_to_point(nex,raster_layer)))
             # We calculate the distance to goal from this neighbour (which is the one
             # from the current node + the move from current node to neighbour)
             new_cost = cost_so_far[current_node] + grid.simple_cost(current_node, nex)
