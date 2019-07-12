@@ -288,8 +288,9 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         list_of_nodes_to_reach = list(set_of_nodes_to_reach)
 
         # If the method of generation asks for a random order, we shuffle the list randomly and it's over.
-        if method_of_generation == 'Random':
-            random.shuffle(set_of_nodes_to_reach)
+        if method_of_generation == '0':
+            feedback.pushInfo("Randomizing order !")
+            random.shuffle(list_of_nodes_to_reach)
         # If not, we create a list that will contain the minimal distance between the given node and the nodes to
         # connect to.
         else:
@@ -300,13 +301,15 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
                 list_of_nodes_to_reach_with_order.append((minimalDistance, node))
 
             # We then sort according to this distance.
-            if method_of_generation == 'Closest first':
+            if method_of_generation == '1':
                 list_of_nodes_to_reach_with_order.sort()
+                feedback.pushInfo("Ordering towards closest !")
             else:
+                feedback.pushInfo("Ordering towards farthest !")
                 list_of_nodes_to_reach_with_order.sort(reverse=True)
 
-        # We put the result in the list of nodes to reach back again, removing the distance.
-        list_of_nodes_to_reach = [i[1] for i in list_of_nodes_to_reach_with_order]
+            # We put the result in the list of nodes to reach back again, removing the distance.
+            list_of_nodes_to_reach = [i[1] for i in list_of_nodes_to_reach_with_order]
 
         # Now, time to launch the algorithm properly !
         feedback.pushInfo(self.tr("Generating the road network...(This can take some time !)"))
@@ -334,7 +337,7 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
                             self.tr("ERROR: The end-point(s) is not reachable from start-point."))
                 # When the road is done by the Dijkstra algorithm, we put the path and the cost
                 # in the list of results
-                listOfResults.append((min_cost_path, costs))
+                listOfResults.append((min_cost_path, costs[-1]))
                 # We also add the nodes of the created path to the set of nodes that can be reached now
                 set_of_nodes_to_connect_to.update(min_cost_path)
 
@@ -345,7 +348,9 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         feedback.pushInfo(self.tr("Network created ! Saving network..."))
 
         # For every path we create, we save it as a line and put it into the sink !
+        ID = 1
         for (path, cost) in listOfResults:
+            feedback.pushInfo("Cost of feature saved : " + str(cost))
             # Time to save the path as a vector.
             # We take the starting and ending points as pointXY
             start_point = MinCostPathHelper._row_col_to_point(path[0], cost_raster)
@@ -354,10 +359,11 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
             path_points = MinCostPathHelper.create_points_from_path(cost_raster, path, start_point, end_point)
             # With the total cost which is the last item in our accumulated cost list,
             # we create the PolyLine that will be returned as a vector.
-            path_feature = MinCostPathHelper.create_path_feature_from_points(path_points, cost, sink_fields)
+            path_feature = MinCostPathHelper.create_path_feature_from_points(path_points, cost, ID, sink_fields)
             # Into the sink that serves as our output, we put the PolyLines from the list of lines we created
             # one by one
             sink.addFeature(path_feature, QgsFeatureSink.FastInsert)
+            ID += 1
 
 
         # When all is done, we return our output that is linked to the sink.
@@ -601,22 +607,25 @@ class MinCostPathHelper:
 
     @staticmethod
     def create_fields():
+        id_field = QgsField("Construction order", QVariant.Int, "integer", 10, 3)
         # Create the field of "total cost" by indicating name, type, typeName, lenght and precision (decimals in that case)
-        cost_field = QgsField("total cost", QVariant.Double, "double", 10, 3)
+        cost_field = QgsField("Total cost", QVariant.Double, "double", 10, 3)
         # Then, we create a container of multiple fields
         fields = QgsFields()
+        fields.append(id_field)
         fields.append(cost_field)
         # We return the container with our field.
         return fields
 
     # Function to create a polyline with the list of qgs.pointXY
     @staticmethod
-    def create_path_feature_from_points(path_points, total_cost, fields):
+    def create_path_feature_from_points(path_points, total_cost, ID, fields):
         polyline = QgsGeometry.fromPolylineXY(path_points)
         feature = QgsFeature(fields)
-        # feature.setAttribute(0, 1) # id
         cost_index = feature.fieldNameIndex("total cost")
         feature.setAttribute(cost_index, total_cost)  # cost
+        id_index = feature.fieldNameIndex("Construction order")
+        feature.setAttribute(id_index, ID) # id
         feature.setGeometry(polyline)
         return feature
 
