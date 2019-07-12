@@ -284,7 +284,7 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         # FOR TESTING PURPOSES
         start_row_col = random.choice(tuple(set_of_nodes_to_reach))
         end_row_cols = list(set_of_nodes_to_connect_to)
-        min_cost_path, costs, selected_end = dijkstra(start_row_col, end_row_cols, matrix, feedback)
+        min_cost_path, costs, selected_end = dijkstra(start_row_col, end_row_cols, matrix, cost_raster, feedback)
         # feedback.pushInfo(str(min_cost_path))
 
         # If there was a problem, we indicate if it's because the search was cancelled by the user
@@ -408,6 +408,8 @@ class MinCostPathHelper:
         extent = raster_layer.dataProvider().extent()
 
         x = (row_col[1] + 0.5) * xres + extent.xMinimum()
+        # There is a dissonance about how I see y axis of the raster
+        # and how the program sees it.
         y = (row_col[0] + 0.5) * yres + extent.yMinimum()
         return QgsPointXY(x, y)
 

@@ -31,9 +31,27 @@
 from math import sqrt
 import queue
 import random
+from qgis.core import (
+    QgsFeature,
+    QgsGeometry,
+    QgsPoint,
+    QgsPointXY,
+    QgsField,
+    QgsFields,
+    QgsWkbTypes,
+    QgsProcessing,
+    QgsFeatureSink,
+    QgsProcessingException,
+    QgsProcessingAlgorithm,
+    QgsProcessingParameterFeatureSource,
+    QgsProcessingParameterFeatureSink,
+    QgsProcessingParameterRasterLayer,
+    QgsProcessingParameterBand,
+    QgsProcessingParameterBoolean
+)
 
 
-def dijkstra(start_row_col, end_row_cols, block, feedback=None):
+def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
     sqrt2 = sqrt(2)
 
     # The grid class is used to both contain the matrix of the values
@@ -50,12 +68,12 @@ def dijkstra(start_row_col, end_row_cols, block, feedback=None):
         # Function to test if a coordinate is in the bounds of the matrix/raster
         def _in_bounds(self, id):
             x, y = id
-            return 0 <= x < self.h and 0 <= y < self.w
+            return 0 <= x < self.w and 0 <= y < self.h
 
         # Function to test if the raster value of this coordinate is not empty (has a cost to pass it)
         def _passable(self, id):
             x, y = id
-            return self.map[x][y] is not None
+            return self.map[x][self.h-y] is not None
 
         # Function to test a coordinate is both in bound and passable
         def is_valid(self, id):
@@ -88,15 +106,27 @@ def dijkstra(start_row_col, end_row_cols, block, feedback=None):
             # Coordinates of next
             nx, ny = nex
             # Get the value associated with the current node
-            currV = self.map[cx][cy]
+            currV = self.map[cx][self.h-cy]
             # Get the value associated with the next node
-            offsetV = self.map[nx][ny]
+            offsetV = self.map[nx][self.h-ny]
             # Check if the nodes are horizontal/vertical neighbours, or diagonals.
             # Adjust the cost to go from one to the other accordingly.
             if cx == nx or cy == ny:
                 return (currV + offsetV) / 2
             else:
                 return sqrt2 * (currV + offsetV) / 2
+
+        @staticmethod
+        def _row_col_to_point(row_col, raster_layer):
+            xres = raster_layer.rasterUnitsPerPixelX()
+            yres = raster_layer.rasterUnitsPerPixelY()
+            extent = raster_layer.dataProvider().extent()
+
+            x = (row_col[1] + 0.5) * xres + extent.xMinimum()
+            # There is a dissonance about how I see y axis of the raster
+            # and how the program sees it.
+            y = (row_col[0] + 0.5) * yres + extent.yMinimum()
+            return QgsPointXY(x, y)
 
     # We create the grid object containing the values of the cost raster
     grid = Grid(block)
@@ -116,12 +146,17 @@ def dijkstra(start_row_col, end_row_cols, block, feedback=None):
     came_from = {}
     # A dictionary to know what is the distance from a given node to the start.
     cost_so_far = {}
+    feedback.pushInfo("Initialization complete for dijkstra algorithm.")
 
     # If the starting node is invalid, we return nothing
     if not grid.is_valid(start_row_col):
+        feedback.pushInfo("Starting node seems invalid (out of extent of raster or has no value on it)")
+        feedback.pushInfo("Starting node info (rowcol) : " + str(start_row_col))
+        feedback.pushInfo("Starting node info (coordinates) " + str(Grid._row_col_to_point(start_row_col, raster_layer)))
         return None, None, None
     # If the starting node is also an ending node, we return nothing
     if start_row_col in end_row_cols:
+        feedback.pushInfo("Starting node seem to coincide with a ending node")
         return None, None, None
 
     # update the progress bar
@@ -133,6 +168,7 @@ def dijkstra(start_row_col, end_row_cols, block, feedback=None):
     came_from[start_row_col] = None
     cost_so_far[start_row_col] = 0
     current_node = None
+    feedback.pushInfo("Dijkstra loop initialized.")
 
     # We launch the loop. It will end when there are no more cell to
     # check (impossible to reach an end node), or will be broken when
@@ -143,6 +179,8 @@ def dijkstra(start_row_col, end_row_cols, block, feedback=None):
         # By using this function, the current node is removed
         # from the frontier.
         current_cost, current_node = frontier.get()
+        feedback.pushInfo("Current node of the loop is " + str(current_node))
+        feedback.pushInfo("Current node corresponds to point " + str(Grid._row_col_to_point(current_node, raster_layer)))
 
         # update the progress bar if feedback is activated.
         if feedback:
@@ -162,6 +200,9 @@ def dijkstra(start_row_col, end_row_cols, block, feedback=None):
 
         # If not, we look at each neighbour of the node
         for nex in grid.neighbors(current_node):
+            feedback.pushInfo("Neighbour investigated is " + str(nex))
+            feedback.pushInfo(
+                "Neighbour corresponds to point " + str(Grid._row_col_to_point(nex,raster_layer)))
             # We calculate the distance to goal from this neighbour (which is the one
             # from the current node + the move from current node to neighbour)
             new_cost = cost_so_far[current_node] + grid.simple_cost(current_node, nex)
