@@ -52,7 +52,9 @@ from qgis.core import (
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterRasterLayer,
     QgsProcessingParameterBand,
-    QgsProcessingParameterBoolean
+    QgsProcessingParameterBoolean,
+    QgsProcessingParameterNumber,
+    QgsProcessingParameterEnum
 )
 # We import the algorithm used for processing a road.
 from .dijkstra_algorithm import dijkstra
@@ -128,16 +130,21 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         )
 
         self.addParameter(
-            QgsProcessingParameterFeatureSource(
+            QgsProcessingParameterNumber(
                 self.SKIDDING_DISTANCE,
-                self.tr('Skidding distance'),
+                self.tr('Skidding distance (in CRS units)'),
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=100,
+                optional=False,
+                minValue=0
             )
         )
 
         self.addParameter(
-            QgsProcessingParameterFeatureSource(
+            QgsProcessingParameterEnum(
                 self.METHOD_OF_GENERATION,
                 self.tr('Method of generation of the road network'),
+                ['Random', 'Closest first', 'Farthest first']
             )
         )
 
@@ -309,7 +316,10 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         total_cost = costs[-1]
         path_feature = MinCostPathHelper.create_path_feature_from_points(path_points, total_cost, sink_fields)
 
-        # Into the sink that serves as our output, we put the PolyLine
+        # Into the sink that serves as our output, we put the PolyLines from the list of lines we created
+        # one by one
+        sink.addFeature(path_feature, QgsFeatureSink.FastInsert)
+        sink.addFeature(path_feature, QgsFeatureSink.FastInsert)
         sink.addFeature(path_feature, QgsFeatureSink.FastInsert)
         # We return our output, that is linked to our sink.
         return {self.OUTPUT: dest_id}
