@@ -47,7 +47,8 @@ from qgis.core import (
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterRasterLayer,
     QgsProcessingParameterBand,
-    QgsProcessingParameterBoolean
+    QgsProcessingParameterBoolean,
+    QgsRaster
 )
 
 
@@ -72,8 +73,12 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
 
         # Function to test if the raster value of this coordinate is not empty (has a cost to pass it)
         def _passable(self, id):
-            x, y = id
-            return self.map[x][self.h-y] is not None
+            y, x = id
+            offsetV = raster_layer.dataProvider().identify(Grid._row_col_to_point(id, raster_layer),
+                                                           QgsRaster.IdentifyFormat(1),
+                                                           raster_layer.dataProvider().extent()).results()[1]
+            # return self.map[x][self.h-y] is not None
+            return offsetV is not None
 
         # Function to test a coordinate is both in bound and passable
         def is_valid(self, id):
@@ -100,15 +105,22 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
             return min(map(lambda node: self.manhattan_distance(curr_node, node), end_nodes))
 
         # Function to get the cost associated for passing from a node to another (current, next)
-        def simple_cost(self, cur, nex):
+        def simple_cost(self, cur, nex, feedback, raster_layer):
             # Coordinates of current
-            cx, cy = cur
+            cy, cx = cur
             # Coordinates of next
-            nx, ny = nex
+            ny, nx = nex
             # Get the value associated with the current node
-            currV = self.map[cx][self.h-cy]
+            # currV = self.map[cx][cy]
+            currV = raster_layer.dataProvider().identify(Grid._row_col_to_point(cur, raster_layer),
+                                                                      QgsRaster.IdentifyFormat(1),
+                                                                      raster_layer.dataProvider().extent()).results()[1]
             # Get the value associated with the next node
-            offsetV = self.map[nx][self.h-ny]
+            # offsetV = self.map[nx][ny]
+            offsetV = raster_layer.dataProvider().identify(Grid._row_col_to_point(nex, raster_layer),
+                                                                      QgsRaster.IdentifyFormat(1),
+                                                                      raster_layer.dataProvider().extent()).results()[1]
+            # feedback.pushInfo("Point " + str(Grid._row_col_to_point(nex, raster_layer)) + " has value " + str(offsetV))
             # Check if the nodes are horizontal/vertical neighbours, or diagonals.
             # Adjust the cost to go from one to the other accordingly.
             if cx == nx or cy == ny:
@@ -160,9 +172,9 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
         return None, None, None
 
     # update the progress bar
-    total_manhattan = grid.min_manhattan(start_row_col, end_row_col_list)
-    min_manhattan = total_manhattan
-    feedback.setProgress(100 * (1 - min_manhattan / total_manhattan))
+    # total_manhattan = grid.min_manhattan(start_row_col, end_row_col_list)
+    # min_manhattan = total_manhattan
+    # feedback.setProgress(100 * (1 - min_manhattan / total_manhattan))
 
     # We initialize the beginning of the loop
     came_from[start_row_col] = None
@@ -199,7 +211,7 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
                 # "Neighbour corresponds to point " + str(Grid._row_col_to_point(nex,raster_layer)))
             # We calculate the distance to goal from this neighbour (which is the one
             # from the current node + the move from current node to neighbour)
-            new_cost = cost_so_far[current_node] + grid.simple_cost(current_node, nex)
+            new_cost = cost_so_far[current_node] + grid.simple_cost(current_node, nex, feedback, raster_layer)
             # If the neighbour is not in the dictionary of opened nodes, or if
             # the cost of passing by this neighbour is cheaper than the previous
             # predecessor that this node had
