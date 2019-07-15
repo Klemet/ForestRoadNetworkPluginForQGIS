@@ -67,13 +67,13 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
 
         # Function to test if a coordinate is in the bounds of the matrix/raster
         def _in_bounds(self, id):
-            x, y = id
-            return 0 <= x < self.w and 0 <= y < self.h
+            y, x = id
+            return 0 <= x < self.w and 0 <= y < (self.h-1)
 
         # Function to test if the raster value of this coordinate is not empty (has a cost to pass it)
         def _passable(self, id):
-            x, y = id
-            return self.map[x][self.h-y] is not None
+            y, x = id
+            return self.map[(self.h-1)-y][x] is not None
 
         # Function to test a coordinate is both in bound and passable
         def is_valid(self, id):
@@ -81,9 +81,9 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
 
         # Function to get the eight neighbours of a given cell. They are filtered to get only the valid ones.
         def neighbors(self, id):
-            x, y = id
-            results = [(x + 1, y), (x, y - 1), (x - 1, y), (x, y + 1),
-                       (x + 1, y - 1), (x + 1, y + 1), (x - 1, y - 1), (x - 1, y + 1)]
+            y, x = id
+            results = [(y + 1, x), (y, x - 1), (y - 1, x), (y, x + 1),
+                       (y + 1, x - 1), (y + 1, x + 1), (y - 1, x - 1), (y - 1, x + 1)]
             results = filter(self.is_valid, results)
             return results
 
@@ -102,13 +102,13 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
         # Function to get the cost associated for passing from a node to another (current, next)
         def simple_cost(self, cur, nex):
             # Coordinates of current
-            cx, cy = cur
+            cy, cx = cur
             # Coordinates of next
-            nx, ny = nex
+            ny, nx = nex
             # Get the value associated with the current node
-            currV = self.map[cx][self.h-cy]
+            currV = self.map[(self.h-1) - cy][cx]
             # Get the value associated with the next node
-            offsetV = self.map[nx][self.h-ny]
+            offsetV = self.map[(self.h-1) - ny][nx]
             # Check if the nodes are horizontal/vertical neighbours, or diagonals.
             # Adjust the cost to go from one to the other accordingly.
             if cx == nx or cy == ny:
