@@ -30,10 +30,8 @@ __author__ = 'clem.hardy@outlook.fr'
 __date__ = 'Currently in work'
 __copyright__ = '(C) 2019 by Clement Hardy'
 
-# FOR TEST PURPOSES : TO REMOVE
-import random
-
 # We load every function necessary from the QIS packages.
+import random
 from PyQt5.QtCore import QCoreApplication, QVariant
 from PyQt5.QtGui import QIcon
 from qgis.core import (
@@ -251,7 +249,7 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         polygons_to_reach_features = list(polygons_to_connect.getFeatures())
         # feedback.pushInfo(str(len(start_features)))
         # We make a set of nodes to reach.
-        set_of_nodes_to_reach = MinCostPathHelper.features_to_row_cols(feedback, polygons_to_reach_features, cost_raster)
+        set_of_nodes_to_reach = MinCostPathHelper.features_to_row_cols(polygons_to_reach_features, cost_raster)
         # If there are no nodes to reach (e.g. all polygons are out of the raster)
         if len(set_of_nodes_to_reach) == 0:
             raise QgsProcessingException(self.tr("ERROR: There is no polygon to reach in this raster. Check if some"
@@ -260,21 +258,24 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         # We do another set concerning the nodes that contains roads to connect to
         roads_to_connect_to_features = list(current_roads.getFeatures())
         # feedback.pushInfo(str(len(end_features)))
-        set_of_nodes_to_connect_to = MinCostPathHelper.features_to_row_cols(feedback, roads_to_connect_to_features, cost_raster)
+        set_of_nodes_to_connect_to = MinCostPathHelper.features_to_row_cols(roads_to_connect_to_features, cost_raster)
         # If there is no nodes to connect to, throw an exception
         if len(set_of_nodes_to_connect_to) == 0:
             raise QgsProcessingException(self.tr("ERROR: There is no road to connect to in this raster. Check if some"
                                                  "roads are inside the raster."))
         # If some overlap, raise another exception :
         if set_of_nodes_to_reach in set_of_nodes_to_connect_to:
-            raise QgsProcessingException(self.tr("ERROR: Some polygons to reach are overlapping with roads to connect to"
-                                                 "given this resolution."))
+            raise QgsProcessingException(self.tr("ERROR: Some polygons to reach are overlapping with roads "
+                                                 "to connect to given this resolution."))
         # feedback.pushInfo(str(start_col_rows))
         # feedback.pushInfo(str(end_col_rows))
 
         # We put the data of the raster into a variable that we will send to the algorithm.
         block = MinCostPathHelper.get_all_block(cost_raster, cost_raster_band)
         # We transform the raster data into a matrix and check if the matrix contains negative values
+        # CAREFUL : The matrix is created in a raster coordinate systems; rows (y axis) start at the top
+        # and go to the bottom. This implies a transformation when getting back the values from a cartesian
+        # system (rows go from bottom to top)
         matrix, contains_negative = MinCostPathHelper.block2matrix(block)
         # We display a feedback on the loading of the raster
         feedback.pushInfo(self.tr("The size of cost raster is: %d * %d") % (block.height(), block.width()))
@@ -289,7 +290,7 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
 
         # If the method of generation asks for a random order, we shuffle the list randomly and it's over.
         if method_of_generation == '0':
-            feedback.pushInfo("Randomizing order !")
+            feedback.pushInfo("Randomizing order of cells to visit...")
             random.shuffle(list_of_nodes_to_reach)
         # If not, we create a list that will contain the minimal distance between the given node and the nodes to
         # connect to.
@@ -297,15 +298,17 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
             list_of_nodes_to_reach_with_order = list()
 
             for node in list_of_nodes_to_reach:
-                minimalDistance = MinCostPathHelper.minimum_distance_to_a_node(node, set_of_nodes_to_connect_to, cost_raster)
+                minimalDistance = MinCostPathHelper.minimum_distance_to_a_node(node,
+                                                                               set_of_nodes_to_connect_to,
+                                                                               cost_raster)
                 list_of_nodes_to_reach_with_order.append((minimalDistance, node))
 
-            # We then sort according to this distance.
+            # We then sort according to this distance, in increasing or decreasing order.
             if method_of_generation == '1':
                 list_of_nodes_to_reach_with_order.sort()
-                feedback.pushInfo("Ordering towards closest !")
+                feedback.pushInfo("Ordering towards closest cells to visit...")
             else:
-                feedback.pushInfo("Ordering towards farthest !")
+                feedback.pushInfo("Ordering towards farthest cells to visit...")
                 list_of_nodes_to_reach_with_order.sort(reverse=True)
 
             # We put the result in the list of nodes to reach back again, removing the distance.
@@ -320,7 +323,9 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
             feedbackProgress += 1
             # First, we check the distance between the node and the nodes to connect to,
             # to see if it's not at a skidding distance of it.
-            minimalDistanceToNodesToConnect = MinCostPathHelper.minimum_distance_to_a_node(nodeToReach, set_of_nodes_to_connect_to, cost_raster)
+            minimalDistanceToNodesToConnect = MinCostPathHelper.minimum_distance_to_a_node(nodeToReach,
+                                                                                           set_of_nodes_to_connect_to,
+                                                                                           cost_raster)
             # If it's superior, we create a road to this node
             if minimalDistanceToNodesToConnect > skidding_distance:
                 start_row_col = nodeToReach
@@ -365,7 +370,6 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
             sink.addFeature(path_feature, QgsFeatureSink.FastInsert)
             ID += 1
 
-
         # When all is done, we return our output that is linked to the sink.
         return {self.OUTPUT: dest_id}
 
@@ -406,7 +410,7 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         # We don't need it right now, as our plugin only have one algorithm
         return ''
 
-    # Function used for translation. Called everytime something needs to be
+    # Function used for translation. Called every time something needs to be
     # Translated
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
@@ -450,12 +454,14 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
     def tags(self):
         return ['least', 'cost', 'path', 'distance', 'raster', 'analysis', 'road', 'network', 'forest', 'A*', 'dijkstra']
 
- # Methods to help the algorithm; all static, do not need to initialize an object of this class.
+# Methods to help the algorithm; all static, do not need to initialize an object of this class.
 class MinCostPathHelper:
 
     # Function to transform a given row/column into a QGIS point with a x,y
     # coordinates based on the resolution of the raster layer we're considering
     # (calculated with its extent and number of cells)
+    # CAREFUL : Coordinate system is cartesian, in opposition to the
+    # matrix containing the data of the raster (see further down)
     @staticmethod
     def _row_col_to_point(row_col, raster_layer):
         xres = raster_layer.rasterUnitsPerPixelX()
@@ -470,7 +476,7 @@ class MinCostPathHelper:
 
     # Method to determine where a given polygon is in the raster
     @staticmethod
-    def _polygon_to_row_col(feedback, polygon, raster_layer):
+    def _polygon_to_row_col(polygon, raster_layer):
         # We initialize the object to return : a set of nodes, corresponding a tuple of a row
         # and a column in the raster
         listOfNodesInPolygons = set()
@@ -490,10 +496,6 @@ class MinCostPathHelper:
         rowMax = floor((extentPolygon.yMaximum() - extentRaster.yMinimum()) / yres)
         colMin = floor((extentPolygon.xMinimum() - extentRaster.xMinimum()) / xres)
         colMax = floor((extentPolygon.xMaximum() - extentRaster.xMinimum()) / xres)
-        feedback.pushInfo("rowMin : " + str(rowMin))
-        feedback.pushInfo("rowMax : " + str(rowMax))
-        feedback.pushInfo("colMin : " + str(colMin))
-        feedback.pushInfo("colMax : " + str(colMax))
 
         # If one of these values is not in the range of the raster, then we
         # restrict it to column and rows that are inside of it.
@@ -505,35 +507,26 @@ class MinCostPathHelper:
         if rowMin > maxRasterRows or colMin > maxRasterCols or rowMax < 0 or colMax < 0:
             return set()
 
-        # If not, we treat the select range of the raster.
+        # If not, we treat the selected range of the raster to avoid looking
+        # at all of the raster.
         # For each column of our range,
         for col in range(colMin, colMax):
             # For each row of our range,
-            feedback.pushInfo("Checking col " + str(col))
             for row in range(rowMin, rowMax):
-                feedback.pushInfo("Checking row " + str(row))
-                # We make a ceintroid of the row/column of the raster
+                # We make a centroid of the row/column of the raster
                 centroid = MinCostPathHelper._row_col_to_point((row, col), raster_layer)
-                feedback.pushInfo("Centroid infos : " + str(QgsGeometry.fromPointXY(centroid)))
-
                 # We check if the centroid is in the polygon
-
                 isInPolygon = QgsGeometry.fromPolygonXY(polygon).contains(centroid)
-                feedback.pushInfo("Polygon infos : " + str(QgsGeometry.fromPolygonXY(polygon).wkbType()))
-                feedback.pushInfo("Polygon infos : " + str(QgsGeometry.fromPolygonXY(polygon)))
 
                 # If it is, we add the centroid to a set with the form of a node (tuple (row, column))
                 if isInPolygon:
                     listOfNodesInPolygons.add((row, col))
-                    feedback.pushInfo("Polygon contained the centroid !")
-                else:
-                    feedback.pushInfo("Polygon did not contained centroid.")
                 # if not, we continue the loops
 
         # When the loops are done, we return the set of nodes that have been taken into account
         return listOfNodesInPolygons
 
-    # Method to determine where a given line is in the raster
+    # Method to determine where a given line is in the raster. Similar to previous.
     @staticmethod
     def _line_to_row_col(line, raster_layer):
         # We initialize the object to return : a set of nodes, corresponding a tuple of a row
@@ -575,10 +568,10 @@ class MinCostPathHelper:
                 centroid = MinCostPathHelper._row_col_to_point((row, col), raster_layer)
                 halfACellX = 0.5 * raster_layer.rasterUnitsPerPixelX()
                 halfACellY = 0.5 * raster_layer.rasterUnitsPerPixelY()
-                square = QgsGeometry.fromPolygonXY([[QgsPointXY(centroid.x() - halfACellX,centroid.y() - halfACellY),
-                                                   QgsPointXY(centroid.x() + halfACellX,centroid.y() - halfACellY),
-                                                   QgsPointXY(centroid.x() + halfACellX,centroid.y() + halfACellY),
-                                                   QgsPointXY(centroid.x() - halfACellX,centroid.y() + halfACellY)]])
+                square = QgsGeometry.fromPolygonXY([[QgsPointXY(centroid.x() - halfACellX, centroid.y() - halfACellY),
+                                                   QgsPointXY(centroid.x() + halfACellX, centroid.y() - halfACellY),
+                                                   QgsPointXY(centroid.x() + halfACellX, centroid.y() + halfACellY),
+                                                   QgsPointXY(centroid.x() - halfACellX, centroid.y() + halfACellY)]])
 
                 # We check if the centroid is in the polygon
                 intersectWithSquare = square.intersects(QgsGeometry.fromPolylineXY(line))
@@ -607,32 +600,39 @@ class MinCostPathHelper:
 
     @staticmethod
     def create_fields():
+        # Create an ID field to know in which order the roads have been constructed
         id_field = QgsField("Construction order", QVariant.Int, "integer", 10, 3)
-        # Create the field of "total cost" by indicating name, type, typeName, lenght and precision (decimals in that case)
+        # Create the field of "total cost" by indicating name, type, typeName,
+        # lenght and precision (decimals in that case)
         cost_field = QgsField("Total cost", QVariant.Double, "double", 10, 3)
         # Then, we create a container of multiple fields
         fields = QgsFields()
+        # We add the fields to the container
         fields.append(id_field)
         fields.append(cost_field)
-        # We return the container with our field.
+        # We return the container with our fields.
         return fields
 
     # Function to create a polyline with the list of qgs.pointXY
     @staticmethod
     def create_path_feature_from_points(path_points, total_cost, ID, fields):
+        # We create the geometry of the polyline
         polyline = QgsGeometry.fromPolylineXY(path_points)
+        # We retrieve the fields and add them to the feature
         feature = QgsFeature(fields)
         cost_index = feature.fieldNameIndex("total cost")
         feature.setAttribute(cost_index, total_cost)  # cost
         id_index = feature.fieldNameIndex("Construction order")
         feature.setAttribute(id_index, ID) # id
+        # We add the geometry to the feature
         feature.setGeometry(polyline)
         return feature
 
     # Method to transform given features into a set of
     # nodes (row + column) on the raster.
+    # Features have to be lines or polygons.
     @staticmethod
-    def features_to_row_cols(feedback, given_features, raster_layer):
+    def features_to_row_cols(given_features, raster_layer):
 
         row_cols = set()
         extent = raster_layer.dataProvider().extent()
@@ -641,40 +641,37 @@ class MinCostPathHelper:
 
         for given_feature in given_features:
             if given_feature.hasGeometry():
-
                 given_feature = given_feature.geometry()
+
+                # Case of multipolygons
                 if given_feature.wkbType() == QgsWkbTypes.MultiPolygon:
-                    feedback.pushInfo("MultiPolygon detected !")
                     multi_polygon = given_feature.asMultiPolygon()
                     for polygon in multi_polygon:
-                        row_cols_for_this_polygon = MinCostPathHelper._polygon_to_row_col(feedback, polygon, raster_layer)
-                        feedback.pushInfo("Polygon is in " + str(len(row_cols_for_this_polygon)) + " cells !")
+                        row_cols_for_this_polygon = MinCostPathHelper._polygon_to_row_col(polygon, raster_layer)
                         row_cols.update(row_cols_for_this_polygon)
 
+                # Case of polygons
                 elif given_feature.wkbType() == QgsWkbTypes.Polygon:
-                    feedback.pushInfo("Polygon detected !")
                     given_feature = given_feature.asPolygon()
-                    row_cols_for_this_polygon = MinCostPathHelper._polygon_to_row_col(feedback, given_feature, raster_layer)
-                    feedback.pushInfo("Polygon is in " + str(len(row_cols_for_this_polygon)) + " cells !")
+                    row_cols_for_this_polygon = MinCostPathHelper._polygon_to_row_col(given_feature, raster_layer)
                     row_cols.update(row_cols_for_this_polygon)
 
+                # Case of multi lines
                 elif given_feature.wkbType() == QgsWkbTypes.MultiLineString:
-                    feedback.pushInfo("MultiLineString detected !")
                     multi_line = given_feature.asMultiPolyline()
                     for line in multi_line:
                         row_cols_for_this_line = MinCostPathHelper._line_to_row_col(line, raster_layer)
-                        feedback.pushInfo("Line is in " + str(len(row_cols_for_this_line)) + " cells !")
                         row_cols.update(row_cols_for_this_line)
 
+                # Case of lines
                 elif given_feature.wkbType() == QgsWkbTypes.LineString:
-                    feedback.pushInfo("Line detected !")
                     given_feature = given_feature.asPolyline()
                     row_cols_for_this_line = MinCostPathHelper._line_to_row_col(given_feature, raster_layer)
-                    feedback.pushInfo("Line is in " + str(len(row_cols_for_this_line)) + " cells !")
                     row_cols.update(row_cols_for_this_line)
 
         return row_cols
 
+    # Function that get the data block from a entire raster for a given band
     @staticmethod
     def get_all_block(raster_layer, band_num):
         provider = raster_layer.dataProvider()
@@ -686,6 +683,7 @@ class MinCostPathHelper:
         height = floor((extent.yMaximum() - extent.yMinimum()) / yres)
         return provider.block(band_num, extent, width, height)
 
+    # Function that transforms
     @staticmethod
     def block2matrix(block):
         contains_negative = False

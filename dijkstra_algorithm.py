@@ -124,8 +124,6 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
     grid = Grid(block)
     # We create a set of nodes to reach (multiple goal possible)
     end_row_cols = set(end_row_cols)
-    # We create a list of nodes to reach for feedback purposes
-    end_row_col_list = list(end_row_cols)
 
     # We create a priority Queue which contains the nodes that are opened but
     # not closed (see functioning of dijkstra algorithm; nodes are opened to
