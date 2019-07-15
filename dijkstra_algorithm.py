@@ -66,14 +66,18 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
             self.w = len(matrix[0])
 
         # Function to test if a coordinate is in the bounds of the matrix/raster
+        # In the code, self.h is used to invert the y axis of the coordinates of rows
+        # because I used cartesian coordinates, and the raster have raster coordinates
+        # (inverted y axis). Self.h is diminished by one because it starts at 1, while
+        # the rows start at 0.
         def _in_bounds(self, id):
-            y, x = id
-            return 0 <= x < self.w and 0 <= y < (self.h-1)
+            row, col = id
+            return 0 <= col < self.w and 0 <= row < (self.h-1)
 
         # Function to test if the raster value of this coordinate is not empty (has a cost to pass it)
         def _passable(self, id):
-            y, x = id
-            return self.map[(self.h-1)-y][x] is not None
+            row, col = id
+            return self.map[(self.h-1)-row][col] is not None
 
         # Function to test a coordinate is both in bound and passable
         def is_valid(self, id):
@@ -81,9 +85,9 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
 
         # Function to get the eight neighbours of a given cell. They are filtered to get only the valid ones.
         def neighbors(self, id):
-            y, x = id
-            results = [(y + 1, x), (y, x - 1), (y - 1, x), (y, x + 1),
-                       (y + 1, x - 1), (y + 1, x + 1), (y - 1, x - 1), (y - 1, x + 1)]
+            row, col = id
+            results = [(row + 1, col), (row, col - 1), (row - 1, col), (row, col + 1),
+                       (row + 1, col - 1), (row + 1, col + 1), (row - 1, col - 1), (row - 1, col + 1)]
             results = filter(self.is_valid, results)
             return results
 
@@ -102,31 +106,19 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
         # Function to get the cost associated for passing from a node to another (current, next)
         def simple_cost(self, cur, nex):
             # Coordinates of current
-            cy, cx = cur
+            crow, ccol = cur
             # Coordinates of next
-            ny, nx = nex
+            nrow, ncol = nex
             # Get the value associated with the current node
-            currV = self.map[(self.h-1) - cy][cx]
+            currV = self.map[(self.h-1) - crow][ccol]
             # Get the value associated with the next node
-            offsetV = self.map[(self.h-1) - ny][nx]
+            offsetV = self.map[(self.h-1) - nrow][ncol]
             # Check if the nodes are horizontal/vertical neighbours, or diagonals.
             # Adjust the cost to go from one to the other accordingly.
-            if cx == nx or cy == ny:
+            if ccol == ncol or crow == nrow:
                 return (currV + offsetV) / 2
             else:
                 return sqrt2 * (currV + offsetV) / 2
-
-        @staticmethod
-        def _row_col_to_point(row_col, raster_layer):
-            xres = raster_layer.rasterUnitsPerPixelX()
-            yres = raster_layer.rasterUnitsPerPixelY()
-            extent = raster_layer.dataProvider().extent()
-
-            x = (row_col[1] + 0.5) * xres + extent.xMinimum()
-            # There is a dissonance about how I see y axis of the raster
-            # and how the program sees it.
-            y = (row_col[0] + 0.5) * yres + extent.yMinimum()
-            return QgsPointXY(x, y)
 
     # We create the grid object containing the values of the cost raster
     grid = Grid(block)
@@ -146,23 +138,14 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
     came_from = {}
     # A dictionary to know what is the distance from a given node to the start.
     cost_so_far = {}
-    feedback.pushInfo("Initialization complete for dijkstra algorithm.")
 
     # If the starting node is invalid, we return nothing
     if not grid.is_valid(start_row_col):
-        # feedback.pushInfo("Starting node seems invalid (out of extent of raster or has no value on it)")
-        # feedback.pushInfo("Starting node info (rowcol) : " + str(start_row_col))
-        # feedback.pushInfo("Starting node info (coordinates) " + str(Grid._row_col_to_point(start_row_col, raster_layer)))
         return None, None, None
     # If the starting node is also an ending node, we return nothing
     if start_row_col in end_row_cols:
         # feedback.pushInfo("Starting node seem to coincide with a ending node")
         return None, None, None
-
-    # update the progress bar
-    total_manhattan = grid.min_manhattan(start_row_col, end_row_col_list)
-    min_manhattan = total_manhattan
-    feedback.setProgress(100 * (1 - min_manhattan / total_manhattan))
 
     # We initialize the beginning of the loop
     came_from[start_row_col] = None
@@ -179,8 +162,6 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
         # By using this function, the current node is removed
         # from the frontier.
         current_cost, current_node = frontier.get()
-        # feedback.pushInfo("Current node of the loop is " + str(current_node))
-        # feedback.pushInfo("Current node corresponds to point " + str(Grid._row_col_to_point(current_node, raster_layer)))
 
         # update the progress bar if feedback is activated.
         if feedback:
@@ -194,9 +175,6 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
 
         # If not, we look at each neighbour of the node
         for nex in grid.neighbors(current_node):
-            # feedback.pushInfo("Neighbour investigated is " + str(nex))
-            # feedback.pushInfo(
-                # "Neighbour corresponds to point " + str(Grid._row_col_to_point(nex,raster_layer)))
             # We calculate the distance to goal from this neighbour (which is the one
             # from the current node + the move from current node to neighbour)
             new_cost = cost_so_far[current_node] + grid.simple_cost(current_node, nex)
@@ -211,12 +189,10 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
                 frontier.put((new_cost, nex))
                 came_from[nex] = current_node
 
-
     # When the loop ends, if we did indeed found an end goal :
     if current_node in end_row_cols:
         # We calculate the cost from this end goal to the start
         end_node = current_node
-        least_cost = cost_so_far[current_node]
         # We initialize the path object that we are going to return : it is a list.
         # We also make a list of costs.
         path = []
