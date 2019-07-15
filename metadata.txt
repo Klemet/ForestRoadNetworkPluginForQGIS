@@ -9,14 +9,11 @@
 [general]
 name=Forest Road Network
 qgisMinimumVersion=3.0
-description= Create a network of forest roads based on zones to access, roads to connect
- them to, and a cost matrix.
-version=0.01
+description=A plugin to create a vectorial network of forest roads based on a cost raster and zones to reach.
+about=This plugin contains an algorithm allowing you to create a vectorial network of forest roads according to a cost matrix, polygons to reach (like forest stands), and an existing road network to connect them to. A skidding distance can be given as an input so as to not create a road to a place that has a road already nearby. It uses the dijkstra algorithm in addition to a heuristic for the order in which the nodes to reach (inside your polygons) are going to be considered. It is not made for operational road planning, but rather strategical planning or theoretical exercises.
+version=1.0
 author=Clément Hardy
 email=clem.hardy@outlook.fr
-
-about=Create a network of forest roads based on zones to access, roads to connect
- them to, and a cost matrix.
 
 tracker=https://github.com/Klemet/ForestRoadNetworkPluginForQGIS/issues
 repository=https://github.com/Klemet/ForestRoadNetworkPluginForQGIS
@@ -25,16 +22,16 @@ repository=https://github.com/Klemet/ForestRoadNetworkPluginForQGIS
 # Recommended items:
 
 # Uncomment the following line and add your changelog:
-# changelog=
+# changelog= 1.0 - First stable version
 
 # Tags are comma separated with spaces allowed
 tags=least cost path distance raster analysis road
 
 homepage=https://github.com/Klemet/ForestRoadNetworkPluginForQGIS
-category=Analysis
+category=Vector
 icon=icon.png
 # experimental flag
-experimental=true
+experimental=false
 
 # deprecated flag (applies to the whole plugin, not just a single version)
 deprecated=False
