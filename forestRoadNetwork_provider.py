@@ -35,7 +35,7 @@ __copyright__ = '(C) 2019 by Clement Hardy'
 # We import the necessary functions from QGIS
 # to create the provider, and our algorithm.
 from qgis.core import QgsProcessingProvider
-from .forestRoadNetworkPlugin_algorithm import ForestRoadNetworkAlgorithm
+from .forestRoadNetwork_algorithm import ForestRoadNetworkAlgorithm
 
 
 class forestRoadNetworkProvider(QgsProcessingProvider):

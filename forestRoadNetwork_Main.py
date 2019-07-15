@@ -37,7 +37,7 @@ import inspect
 # We import the functions from QGIS necessary to feed him
 # the functioning of the plugin.
 from qgis.core import QgsProcessingAlgorithm, QgsApplication
-from .forestRoadNetworkPlugin_provider import forestRoadNetworkProvider
+from .forestRoadNetwork_provider import forestRoadNetworkProvider
 
 # These commands seem to get the path where the plugin is executed
 # from, and add it to the list of path called sys.path where python

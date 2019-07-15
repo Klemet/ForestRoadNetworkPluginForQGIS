@@ -41,6 +41,6 @@ def classFactory(iface):  # pylint: disable=invalid-name
     #
     # The function will return our plugin, which contains two
     # functions that QGIS can launch : initGUI and unload, both
-    # need to load or unload the plugin. See forestRoadNetworkPlugin.py
-    from .forestRoadNetworkPlugin import forestRoadNetworkPlugin
+    # need to load or unload the plugin. See forestRoadNetwork_Main.py
+    from .forestRoadNetwork_Main import forestRoadNetworkPlugin
     return forestRoadNetworkPlugin()
