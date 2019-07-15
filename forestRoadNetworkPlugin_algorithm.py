@@ -244,6 +244,7 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         if sink is None:
             raise QgsProcessingException(self.invalidSinkError(parameters, self.OUTPUT))
 
+        feedback.pushInfo("Scanning the polygons to reach...")
         # First of all : We transform the starting polygons into cells on the raster (coordinates
         # in rows and colons).
         polygons_to_reach_features = list(polygons_to_connect.getFeatures())
@@ -254,7 +255,9 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         if len(set_of_nodes_to_reach) == 0:
             raise QgsProcessingException(self.tr("ERROR: There is no polygon to reach in this raster. Check if some"
                                                  "polygons are inside the raster."))
+        feedback.pushInfo("Polygons scanned !")
 
+        feedback.pushInfo("Scanning the existing roads...")
         # We do another set concerning the nodes that contains roads to connect to
         roads_to_connect_to_features = list(current_roads.getFeatures())
         # feedback.pushInfo(str(len(end_features)))
@@ -267,8 +270,7 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         if set_of_nodes_to_reach in set_of_nodes_to_connect_to:
             raise QgsProcessingException(self.tr("ERROR: Some polygons to reach are overlapping with roads "
                                                  "to connect to given this resolution."))
-        # feedback.pushInfo(str(start_col_rows))
-        # feedback.pushInfo(str(end_col_rows))
+        feedback.pushInfo("Roads scanned !")
 
         # We put the data of the raster into a variable that we will send to the algorithm.
         block = MinCostPathHelper.get_all_block(cost_raster, cost_raster_band)
@@ -278,7 +280,7 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         # system (rows go from bottom to top)
         matrix, contains_negative = MinCostPathHelper.block2matrix(block)
         # We display a feedback on the loading of the raster
-        feedback.pushInfo(self.tr("The size of cost raster is: %d * %d") % (block.height(), block.width()))
+        feedback.pushInfo(self.tr("The size of the cost raster is: %d * %d pixels") % (block.height(), block.width()))
 
         # If there are negative values in the raster, we make an issue.
         if contains_negative:
@@ -297,11 +299,18 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         else:
             list_of_nodes_to_reach_with_order = list()
 
+            feedback.pushInfo("Computing distances between polygons and roads...(This can take some time !)")
+            feedbackProgress = 0
             for node in list_of_nodes_to_reach:
                 minimalDistance = MinCostPathHelper.minimum_distance_to_a_node(node,
                                                                                set_of_nodes_to_connect_to,
                                                                                cost_raster)
                 list_of_nodes_to_reach_with_order.append((minimalDistance, node))
+                feedbackProgress += 1
+                feedback.setProgress(100 * (feedbackProgress / len(list_of_nodes_to_reach)))
+                if feedback.isCanceled():
+                    raise QgsProcessingException(self.tr("ERROR: Operation was cancelled."))
+            feedback.pushInfo("Computing distances is done !")
 
             # We then sort according to this distance, in increasing or decreasing order.
             if method_of_generation == '1':
@@ -310,6 +319,8 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
             else:
                 feedback.pushInfo("Ordering towards farthest cells to visit...")
                 list_of_nodes_to_reach_with_order.sort(reverse=True)
+
+            feedback.pushInfo("Ordering is done !")
 
             # We put the result in the list of nodes to reach back again, removing the distance.
             list_of_nodes_to_reach = [i[1] for i in list_of_nodes_to_reach_with_order]
