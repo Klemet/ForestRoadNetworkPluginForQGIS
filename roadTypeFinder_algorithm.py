@@ -166,16 +166,41 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
         if sink is None:
             raise QgsProcessingException(self.invalidSinkError(parameters, self.OUTPUT))
 
+        feedback.pushInfo(self.tr("Scanning lines..."))
         # For each line feature in the roadnetwork, we initialize an object of class "line"
-        multi_line = road_network.asMultiPolyline()
+        multi_line = set(road_network.getFeatures())
         setOfRoadsAsLines = set()
         ID = 0
-        for line in multi_line:
-            setOfRoadsAsLines.add(LineForAlgorithm(line, ID))
-            ID += 1
+        for featureline in multi_line:
+            featureline = featureline.geometry()
+
+            if featureline.wkbType() == QgsWkbTypes.MultiLineString:
+                multi_line = featureline.asMultiPolyline()
+                for line in multi_line:
+                    setOfRoadsAsLines.add(LineForAlgorithm(line, ID))
+                    ID += 1
+
+            # Case of lines
+            elif featureline.wkbType() == QgsWkbTypes.LineString:
+                line = featureline.asPolyline()
+                setOfRoadsAsLines.add(LineForAlgorithm(line, ID))
+                ID += 1
+
+            if feedback.isCanceled():
+                raise QgsProcessingException(self.tr("ERROR: Operation was cancelled."))
+
+        feedback.pushInfo(self.tr("Scanning network structure..."))
+        tempSetOfEndingPoints = ending_points.getFeatures()
+        setOfMultiEndingPoints = [endingPoint.geometry().asMultiPoint() for endingPoint in list(tempSetOfEndingPoints)]
+        setOfEndingPoints = set()
+        for multiEnginPoints in setOfMultiEndingPoints:
+            for point in multiEnginPoints:
+                setOfEndingPoints.add(point)
 
         for line in setOfRoadsAsLines:
-            line.initializeRelationToNetwork(setOfRoadsAsLines, ending_points.AsMultiPointXY)
+            line.initializeRelationToNetwork(setOfRoadsAsLines, setOfEndingPoints)
+            if feedback.isCanceled():
+                raise QgsProcessingException(self.tr("ERROR: Operation was cancelled."))
 
         # We get all of the lines that have an ending not connected to another line,
         # and that does not correspond to an ending point.
@@ -183,11 +208,16 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
 
         # We open these lines (they will be considered next in the loop)
         frontier = set()
+        setOfLinesToReturn = set()
         for line in setOfLeafLines:
             frontier.add(line)
 
+        feedback.pushInfo(self.tr("Commencing flux algorithm..."))
         # We loop : The loop will end when no more line is in an "open" status.
         while not len(frontier) == 0:
+
+            if feedback.isCanceled():
+                raise QgsProcessingException(self.tr("ERROR: Operation was cancelled."))
             # We retrieve all of the current opened lines and put them in a set
             openLines = list(frontier)
             # (those lines are now gone from the queue)
@@ -195,6 +225,7 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
 
             # For each line in this set
             for line in openLines:
+                setOfLinesToReturn.add(line)
                 # We look at the neighbours of the line that are downstream (we use the difference of flux to know that)
                 neighbors = line.getNeighborsDownstream()
                 for neighbour in neighbors:
@@ -203,10 +234,10 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
                     # The flux of the neighbour sums with the flux of this line
                     neighbour.fluxAddition(line)
 
-
+        feedback.pushInfo(self.tr("Preparing outputs..."))
         # Once that all of this is done, we prepare the output.
         # For every path we create, we save it as a line and put it into the sink !
-        for line in setOfRoadsAsLines:
+        for line in setOfLinesToReturn:
             # With the total cost which is the last item in our accumulated cost list,
             # we create the PolyLine that will be returned as a vector.
             path_feature = RoadTypeFinderHelper.create_path_feature_from_points(line.lineFeature, line.flux, sink_fields)
@@ -297,7 +328,7 @@ class LineForAlgorithm:
     def __init__(self, lineFeature, ID):
         """Constructor for the line class"""
         self.uniqueID = ID
-        self.lineFeature = lineFeature.asPolyline() # As Polyline gives a list of points
+        self.lineFeature = lineFeature # As Polyline gives a list of points
         # Ending 1 and 2 are QgsPointXY.
         self.ending1 = self.lineFeature[0]
         self.ending2 = self.lineFeature[-1]
@@ -312,9 +343,9 @@ class LineForAlgorithm:
 
         for otherLine in listOfLinesForAlgorithm:
             if otherLine.uniqueID != self.uniqueID:
-                if self.ending1.compare(otherLine.ending1) or self.ending1.compare(otherLine.ending2):
+                if self.ending1.compare(otherLine.ending1,1) or self.ending1.compare(otherLine.ending2,1):
                     self.linesConnectedToEnding1.add(otherLine)
-                elif self.ending2.compare(otherLine.ending1) or self.ending2.compare(otherLine.ending2):
+                elif self.ending2.compare(otherLine.ending1,1) or self.ending2.compare(otherLine.ending2,1):
                     self.linesConnectedToEnding2.add(otherLine)
 
         self.connections = len(self.linesConnectedToEnding1) + len(self.linesConnectedToEnding2)
@@ -322,15 +353,15 @@ class LineForAlgorithm:
         # To check if the line is a leaf (an outward ending of the network), we check if it has an ending
         # without neighbors, and if this ending coincide with an end point. If it does not for any ending point,
         # then the line is a leaf of the network.
-        if len(self.linesConnectedToending1) == 0:
+        if len(self.linesConnectedToEnding1) == 0:
             for endingPoint in endingPoints:
-                if not self.ending1.compare(endingPoint):
+                if not self.ending1.compare(endingPoint,1):
                     self.isALeafOfTheNetwork = True
                     self.flux = 1
 
         elif len(self.linesConnectedToEnding2) == 0:
             for endingPoint in endingPoints:
-                if not self.ending2.compare(endingPoint):
+                if not self.ending2.compare(endingPoint,1):
                     self.isALeafOfTheNetwork = True
                     self.flux = 1
 
