@@ -32,6 +32,7 @@ __copyright__ = '(C) 2019 by Clement Hardy'
 
 # We load every function necessary from the QIS packages.
 import random
+import queue
 from PyQt5.QtCore import QCoreApplication, QVariant
 from PyQt5.QtGui import QIcon
 from qgis.core import (
@@ -54,10 +55,6 @@ from qgis.core import (
     QgsProcessingParameterNumber,
     QgsProcessingParameterEnum
 )
-# We import the algorithm used for processing a road.
-from .dijkstra_algorithm import dijkstra
-# We import mathematical functions needed for the algorithm.
-from math import floor, sqrt
 
 # The algorithm class heritates from the algorithm class of QGIS.
 # There, it can register different parameter during initialization
@@ -81,13 +78,8 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
     # used when calling the algorithm from another algorithm, or when
     # calling from the QGIS console.
 
-    INPUT_COST_RASTER = 'INPUT_COST_RASTER'
-    INPUT_RASTER_BAND = 'INPUT_RASTER_BAND'
-    INPUT_POLYGONS_TO_ACCESS = 'INPUT_POLYGONS_TO_ACCESS'
-    INPUT_ROADS_TO_CONNECT_TO = 'INPUT_ROADS_TO_CONNECT_TO'
-    # BOOLEAN_OUTPUT_LINEAR_REFERENCE = 'BOOLEAN_OUTPUT_LINEAR_REFERENCE'
-    SKIDDING_DISTANCE = 'SKIDDING_DISTANCE'
-    METHOD_OF_GENERATION = 'METHOD_OF_GENERATION'
+    INPUT_ROAD_NETWORK = 'INPUT_ROAD_NETWORK'
+    INPUT_ENDING_POINTS = 'INPUT_ENDING_POINTS'
     OUTPUT = 'OUTPUT'
 
     def initAlgorithm(self, config):
@@ -95,54 +87,20 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
         Here we define the inputs and output of the algorithm, along
         with some other properties. Theses will be asked to the user.
         """
-        self.addParameter(
-            QgsProcessingParameterRasterLayer(
-                self.INPUT_COST_RASTER,
-                self.tr('Cost raster layer'),
-            )
-        )
-
-        self.addParameter(
-            QgsProcessingParameterBand(
-                self.INPUT_RASTER_BAND,
-                self.tr('Cost raster band'),
-                0,
-                self.INPUT_COST_RASTER,
-            )
-        )
 
         self.addParameter(
             QgsProcessingParameterFeatureSource(
-                self.INPUT_POLYGONS_TO_ACCESS,
-                self.tr('Polygons to access via the generated roads'),
-                [QgsProcessing.TypeVectorPolygon]
-            )
-        )
-
-        self.addParameter(
-            QgsProcessingParameterFeatureSource(
-                self.INPUT_ROADS_TO_CONNECT_TO,
-                self.tr('Roads to connect the polygons to access to'),
+                self.INPUT_ROAD_NETWORK,
+                self.tr('Road network whose road types must be determined'),
                 [QgsProcessing.TypeVectorLine]
             )
         )
 
         self.addParameter(
-            QgsProcessingParameterNumber(
-                self.SKIDDING_DISTANCE,
-                self.tr('Skidding distance (in CRS units)'),
-                type=QgsProcessingParameterNumber.Double,
-                defaultValue=100,
-                optional=False,
-                minValue=0
-            )
-        )
-
-        self.addParameter(
-            QgsProcessingParameterEnum(
-                self.METHOD_OF_GENERATION,
-                self.tr('Method of generation of the road network'),
-                ['Random', 'Closest first', 'Farthest first']
+            QgsProcessingParameterFeatureSource(
+                self.INPUT_ENDING_POINTS,
+                self.tr('The end points (connections to main road network) of the network'),
+                [QgsProcessing.TypeVectorPoint]
             )
         )
 
@@ -157,39 +115,16 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
         """
         Here is where the processing itself takes place.
         """
-        cost_raster = self.parameterAsRasterLayer(
+
+        road_network = self.parameterAsVectorLayer(
             parameters,
-            self.INPUT_COST_RASTER,
+            self.INPUT_ROAD_NETWORK,
             context
         )
 
-        cost_raster_band = self.parameterAsInt(
+        ending_points = self.parameterAsVectorLayer(
             parameters,
-            self.INPUT_RASTER_BAND,
-            context
-        )
-
-        polygons_to_connect = self.parameterAsVectorLayer(
-            parameters,
-            self.INPUT_POLYGONS_TO_ACCESS,
-            context
-        )
-
-        current_roads = self.parameterAsVectorLayer(
-            parameters,
-            self.INPUT_ROADS_TO_CONNECT_TO,
-            context
-        )
-
-        skidding_distance = self.parameterAsInt(
-            parameters,
-            self.SKIDDING_DISTANCE,
-            context
-        )
-
-        method_of_generation = self.parameterAsString(
-            parameters,
-            self.METHOD_OF_GENERATION,
+            self.INPUT_ENDING_POINTS,
             context
         )
 
@@ -197,32 +132,19 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
         # encountered a fatal error. The exception text can be any string, but in this
         # case we use the pre-built invalidSourceError method to return a standard
         # helper text for when a source cannot be evaluated
-        if cost_raster is None:
-            raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT_COST_RASTER))
-        if cost_raster_band is None:
-            raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT_RASTER_BAND))
-        if polygons_to_connect is None:
-            raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT_START_LAYER))
-        if current_roads is None:
-            raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT_START_LAYER))
-        if skidding_distance is None:
-            raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT_START_LAYER))
-        if method_of_generation is None:
-            raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT_START_LAYER))
+        if road_network is None:
+            raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT_ROAD_NETWORK))
+        if ending_points is None:
+            raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT_ENDING_POINTS))
 
         # We try to see if there are divergence between the CRSs of the inputs
-        if cost_raster.crs() != polygons_to_connect.sourceCrs() \
-                or polygons_to_connect.sourceCrs() != current_roads.sourceCrs():
+        if road_network.crs() != ending_points.sourceCrs():
             raise QgsProcessingException(self.tr("ERROR: The input layers have different CRSs."))
-
-        # We check if the cost raster in indeed numeric
-        if cost_raster.rasterType() not in [cost_raster.Multiband, cost_raster.GrayOrUndefined]:
-            raise QgsProcessingException(self.tr("ERROR: The input cost raster is not numeric."))
 
         # We initialize the "sink", an object that will make use able to create an output.
         # First, we create the fields for the attributes of our lines as outputs.
         # They will only have one field :
-        sink_fields = MinCostPathHelper.create_fields()
+        sink_fields = RoadTypeFinderHelper.create_fields()
         # We indicate that our output will be a line, stored in WBK format.
         output_geometry_type = QgsWkbTypes.LineString
         # Finally, we create the field object and register the destination ID of it.
@@ -234,7 +156,7 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
             context,
             fields=sink_fields,
             geometryType=output_geometry_type,
-            crs=cost_raster.crs(),
+            crs=road_network.crs(),
         )
 
         # If sink was not created, throw an exception to indicate that the algorithm
@@ -243,6 +165,64 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
         # helper text for when a sink cannot be evaluated
         if sink is None:
             raise QgsProcessingException(self.invalidSinkError(parameters, self.OUTPUT))
+
+        # For each line feature in the roadnetwork, we initialize an object of class "line"
+        multi_line = road_network.asMultiPolyline()
+        setOfRoadsAsLines = set()
+        ID = 0
+        for line in multi_line:
+            setOfRoadsAsLines.add(LineForAlgorithm(line, ID))
+            ID += 1
+
+        for line in setOfRoadsAsLines:
+            line.initializeRelationToNetwork(setOfRoadsAsLines, ending_points.AsMultiPointXY)
+
+        # We get all of the lines that have an ending not connected to another line,
+        # and that does not correspond to an ending point.
+        setOfLeafLines = set([line for list in list(setOfRoadsAsLines) if line.isALeafOfTheNetwork])
+
+        # We open these lines (they will be considered next in the loop)
+        frontier = set()
+        for line in setOfLeafLines:
+            frontier.add(line)
+
+        # We loop : The loop will end when no more line is in an "open" status.
+        while not len(frontier) == 0:
+            # We retrieve all of the current opened lines and put them in a set
+            openLines = list(frontier)
+            # (those lines are now gone from the queue)
+            frontier = set()
+
+            # For each line in this set
+            for line in openLines:
+                # We look at the neighbours of the line that are downstream (we use the difference of flux to know that)
+                neighbors = line.getNeighborsDownstream()
+                for neighbour in neighbors:
+                    # We open the neighbours downstream if they are not already
+                    frontier.add(neighbour)
+                    # The flux of the neighbour sums with the flux of this line
+                    neighbour.fluxAddition(line)
+
+
+        # Once that all of this is done, we prepare the output.
+        # For every path we create, we save it as a line and put it into the sink !
+        for line in setOfRoadsAsLines:
+            # With the total cost which is the last item in our accumulated cost list,
+            # we create the PolyLine that will be returned as a vector.
+            path_feature = RoadTypeFinderHelper.create_path_feature_from_points(line.lineFeature, line.flux, sink_fields)
+            # Into the sink that serves as our output, we put the PolyLines from the list of lines we created
+            # one by one
+            sink.addFeature(path_feature, QgsFeatureSink.FastInsert)
+
+        # When all is done, we return our output that is linked to the sink.
+        return {self.OUTPUT: dest_id}
+
+
+
+
+
+
+    ##########################################################################################################################
 
         feedback.pushInfo("Scanning the polygons to reach...")
         # First of all : We transform the starting polygons into cells on the raster (coordinates
@@ -363,26 +343,8 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
         feedback.setProgress(100)
         feedback.pushInfo(self.tr("Network created ! Saving network..."))
 
-        # For every path we create, we save it as a line and put it into the sink !
-        ID = 1
-        for (path, cost) in listOfResults:
-            feedback.pushInfo("Cost of feature saved : " + str(cost))
-            # Time to save the path as a vector.
-            # We take the starting and ending points as pointXY
-            start_point = MinCostPathHelper._row_col_to_point(path[0], cost_raster)
-            end_point = MinCostPathHelper._row_col_to_point(path[-1], cost_raster)
-            # We make a list of Qgs.pointXY from the nodes in our pathlist
-            path_points = MinCostPathHelper.create_points_from_path(cost_raster, path, start_point, end_point)
-            # With the total cost which is the last item in our accumulated cost list,
-            # we create the PolyLine that will be returned as a vector.
-            path_feature = MinCostPathHelper.create_path_feature_from_points(path_points, cost, ID, sink_fields)
-            # Into the sink that serves as our output, we put the PolyLines from the list of lines we created
-            # one by one
-            sink.addFeature(path_feature, QgsFeatureSink.FastInsert)
-            ID += 1
+    ##########################################################################################################################
 
-        # When all is done, we return our output that is linked to the sink.
-        return {self.OUTPUT: dest_id}
 
     # Here are different functions used by QGIS to name and define the algorithm
     # to the user.
@@ -441,32 +403,103 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
           
           Please ensure all the input layers have the same CRS.
         
-          - Cost raster layer: Numeric raster layer that represents the cost of each spatial unit. It should not contains negative value. Pixel with `NoData` value represent it is unreachable.
+          - Road Network : a forest road network where every line is split at intersections. They can be splitted even more, but they HAVE to be splitted at intersections. You can use the "Split with lines" tools for that in QGIS.
          
-          - Cost raster band: The input band of the cost raster.
-         
-          - Polygons to access via the generated roads: Layer that contains the polygons to access.
-         
-          - Roads to connect the polygons to access to: Layer that contains the roads to connect the polygons to.
-          
-          - Network generation type: a parameter indicating what type of heuristic is used to generate the network. Random cell order, farther cells from current roads first, closer cells from curent roads first.
-          
-          - Skidding distance. Maximum distance that a cell can be to not need a road going up to it.
+          - Ending points : points that correspond EXACTLY to the ending of the network, meaning its connection to the main road network. WARNING : If those points do not correspond exactly with the end of a line or the end of your network, the algorithm will have problems to complete.
          
         """)
 
     def shortDescription(self):
-        return self.tr('Generate a network of roads to connect forest area to an existing road network.')
+        return self.tr('Determine the type (primary, secondary, tertiary) of roads in a forest road network.')
 
     # Path to the icon of the algorithm
     def svgIconPath(self):
         return '.icon.png'
 
     def tags(self):
-        return ['least', 'cost', 'path', 'distance', 'raster', 'analysis', 'road', 'network', 'forest', 'A*', 'dijkstra']
+        return ['type', 'primary', 'secondary', 'tertiary', 'roads', 'analysis', 'road', 'network', 'forest']
+
+
+
+# The "Line" object used in the algorithm
+class LineForAlgorithm:
+    """Class used for the algorithm. To initialize, a line feature should be provided"""
+
+    def __init__(self, lineFeature, ID):
+        """Constructor for the line class"""
+        self.uniqueID = ID
+        self.lineFeature = lineFeature.asPolyline() # As Polyline gives a list of points
+        # Ending 1 and 2 are QgsPointXY.
+        self.ending1 = self.lineFeature[0]
+        self.ending2 = self.lineFeature[-1]
+        self.linesConnectedToEnding1 = set()
+        self.linesConnectedToEnding2 = set()
+        self.connections = 0
+        self.flux = float("inf")
+        self.isALeafOfTheNetwork = False
+
+    def initializeRelationToNetwork(self, listOfLinesForAlgorithm, endingPoints):
+        """Initialize the lines that are connected to this line, and we also check if the line is a "leaf" or not"""
+
+        for otherLine in listOfLinesForAlgorithm:
+            if otherLine.uniqueID != self.uniqueID:
+                if self.ending1.compare(otherLine.ending1) or self.ending1.compare(otherLine.ending2):
+                    self.linesConnectedToEnding1.add(otherLine)
+                elif self.ending2.compare(otherLine.ending1) or self.ending2.compare(otherLine.ending2):
+                    self.linesConnectedToEnding2.add(otherLine)
+
+        self.connections = len(self.linesConnectedToEnding1) + len(self.linesConnectedToEnding2)
+
+        # To check if the line is a leaf (an outward ending of the network), we check if it has an ending
+        # without neighbors, and if this ending coincide with an end point. If it does not for any ending point,
+        # then the line is a leaf of the network.
+        if len(self.linesConnectedToending1) == 0:
+            for endingPoint in endingPoints:
+                if not self.ending1.compare(endingPoint):
+                    self.isALeafOfTheNetwork = True
+                    self.flux = 1
+
+        elif len(self.linesConnectedToEnding2) == 0:
+            for endingPoint in endingPoints:
+                if not self.ending2.compare(endingPoint):
+                    self.isALeafOfTheNetwork = True
+                    self.flux = 1
+
+    def getNeighborsDownstream(self):
+        """For this function to work, the network initialization must be done. Also, it must be called during
+        the algorithm so as force the fact that one of the neighbors must have a smaller flux."""
+
+        # First, we check if the line is a leaf. If so, then the ending that is not the "leaf" ending is the
+        # downstream one (= the one that has lines connected to it).
+        if self.isALeafOfTheNetwork:
+            if len(self.linesConnectedToEnding1) != 0:
+                return(self.linesConnectedToEnding1)
+            else:
+                return (self.linesConnectedToEnding2)
+        else:
+            # If not a leaf, we just need to look at one of the two endings. If one ending contains lines of lower
+            # flux, then the other ending has to be the one that is downstream.
+            endingThatIsDownstream = 'ending1'
+            for neighbourLine in self.linesConnectedToEnding1:
+                if neighbourLine.flux < self.flux:
+                    endingThatIsDownstream = 'ending2'
+                    break
+            if endingThatIsDownstream == 'ending1':
+                return(self.linesConnectedToEnding1)
+            else:
+                return (self.linesConnectedToEnding2)
+
+    def fluxAddition(self, upstreamLine):
+        """This function adds the flux coming from a line upstream to the flux of this line."""
+
+        if self.flux == float("inf"):
+            self.flux = upstreamLine.flux
+        else
+            self.flux = self.flux + upstreamLine.flux
+
 
 # Methods to help the algorithm; all static, do not need to initialize an object of this class.
-class MinCostPathHelper:
+class RoadTypeFinderHelper:
 
     # Function to transform a given row/column into a QGIS point with a x,y
     # coordinates based on the resolution of the raster layer we're considering
@@ -612,29 +645,23 @@ class MinCostPathHelper:
     @staticmethod
     def create_fields():
         # Create an ID field to know in which order the roads have been constructed
-        id_field = QgsField("Construction order", QVariant.Int, "integer", 10, 3)
-        # Create the field of "total cost" by indicating name, type, typeName,
-        # lenght and precision (decimals in that case)
-        cost_field = QgsField("Total cost", QVariant.Double, "double", 10, 3)
+        flux_field = QgsField("flux", QVariant.Int, "integer", 10, 3)
         # Then, we create a container of multiple fields
         fields = QgsFields()
         # We add the fields to the container
-        fields.append(id_field)
-        fields.append(cost_field)
+        fields.append(flux_field)
         # We return the container with our fields.
         return fields
 
     # Function to create a polyline with the list of qgs.pointXY
     @staticmethod
-    def create_path_feature_from_points(path_points, total_cost, ID, fields):
+    def create_path_feature_from_points(path_points, flux, fields):
         # We create the geometry of the polyline
         polyline = QgsGeometry.fromPolylineXY(path_points)
         # We retrieve the fields and add them to the feature
         feature = QgsFeature(fields)
-        cost_index = feature.fieldNameIndex("total cost")
-        feature.setAttribute(cost_index, total_cost)  # cost
-        id_index = feature.fieldNameIndex("Construction order")
-        feature.setAttribute(id_index, ID) # id
+        flux_index = feature.fieldNameIndex("flux")
+        feature.setAttribute(flux_index, flux)
         # We add the geometry to the feature
         feature.setGeometry(polyline)
         return feature
