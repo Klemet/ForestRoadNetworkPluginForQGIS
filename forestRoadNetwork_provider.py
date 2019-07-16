@@ -36,6 +36,7 @@ __copyright__ = '(C) 2019 by Clement Hardy'
 # to create the provider, and our algorithm.
 from qgis.core import QgsProcessingProvider
 from .forestRoadNetwork_algorithm import ForestRoadNetworkAlgorithm
+from .roadTypeFinder_algorithm import RoadTypeFinderAlgorithm
 
 
 class forestRoadNetworkProvider(QgsProcessingProvider):
@@ -49,7 +50,7 @@ class forestRoadNetworkProvider(QgsProcessingProvider):
         # We load the algorithms that the plugin is
         # going to use while creating the provider.
         # We initialize it at the same time.
-        self.alglist = [ForestRoadNetworkAlgorithm()]
+        self.alglist = [ForestRoadNetworkAlgorithm(), RoadTypeFinderAlgorithm()]
 
     def unload(self):
         """
@@ -83,7 +84,7 @@ class forestRoadNetworkProvider(QgsProcessingProvider):
 
         This string should be short (e.g. "Lastools") and localised.
         """
-        return self.tr('Forest Road Network Creation')
+        return self.tr('Forest Road Network Plugin')
 
     def longName(self):
         """
