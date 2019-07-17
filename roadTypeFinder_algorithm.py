@@ -172,9 +172,12 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
         multi_line = set(road_network.getFeatures())
         setOfRoadsAsLines = set()
         ID = 0
+        # We are carefull to treat each individual line of the given layer;
+        # for that, we have to treat the case of a multiline geometry, or a simple line.
         for featureline in multi_line:
             featureline = featureline.geometry()
 
+            # Case of multiline
             if featureline.wkbType() == QgsWkbTypes.MultiLineString:
                 multi_line = featureline.asMultiPolyline()
                 for line in multi_line:
@@ -190,9 +193,7 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
             if feedback.isCanceled():
                 raise QgsProcessingException(self.tr("ERROR: Operation was cancelled."))
 
-        # Then, we update our line objects to reflect network structure
-        feedback.pushInfo(self.tr("Scanning network structure..."))
-        # First, we transform the points into a set of geometry we can check,
+        # First, we transform the ending points into a list of QgsPointXY we can compare to our lines.
         tempSetOfEndingPoints = ending_points.getFeatures()
         setOfMultiEndingPoints = [endingPoint.geometry().asMultiPoint() for endingPoint in list(tempSetOfEndingPoints)]
         setOfEndingPoints = set()
@@ -200,7 +201,9 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
             for point in multiEnginPoints:
                 setOfEndingPoints.add(point)
 
-        # Then, we update the line objects
+        # Then, we update our line objects to reflect network structure. See function in Line class.
+        feedback.pushInfo(self.tr("Scanning network structure..."))
+
         feedbackProgress = 0
         for line in setOfRoadsAsLines:
             line.initializeRelationToNetwork(setOfRoadsAsLines, setOfEndingPoints)
@@ -209,7 +212,7 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
             feedbackProgress += 1
             feedback.setProgress(100 * (feedbackProgress / len(setOfRoadsAsLines)))
 
-        # Once it's done, we have to give a direction to each line object.
+        # Once it's done, we have to give a direction to each line object. Again, see function in Line class.
         feedback.pushInfo(self.tr("Scanning network direction..."))
         feedbackProgress = 0
         for line in setOfRoadsAsLines:
@@ -219,11 +222,12 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
             feedbackProgress += 1
             feedback.setProgress(100 * (feedbackProgress / len(setOfRoadsAsLines)))
 
-        # We get all of the lines that have an ending not connected to another line,
-        # and that does not correspond to an ending point.
+        # Now, we can compute the fluxes that go through the network.
+        # We will start with the "leaves" of the network, from which the wood will come.
+        # We get them in a set.
         setOfLeafLines = set([line for line in list(setOfRoadsAsLines) if line.isALeafOfTheNetwork])
 
-        # We open these lines (they will be considered next in the loop)
+        # We initialize the objects for the loop.
         frontier = queue.Queue()
         setOfLinesToReturn = set()
         for line in setOfLeafLines:
@@ -231,48 +235,33 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
 
         feedback.pushInfo(self.tr("Commencing flux algorithm..."))
         # We loop : The loop will end when no more line is in an "open" status.
+        # WARNING : if the directions of the lines are not correct, this will become an infinite loop !
         linesAlreadyConsidered = set()
-        limit = 0
         while not frontier.empty():
-            feedback.pushInfo(self.tr("Looping..."))
+
             if feedback.isCanceled():
                 raise QgsProcessingException(self.tr("ERROR: Operation was cancelled."))
 
-            # feedback.pushInfo(self.tr("Emptying frontier and creating list of open lines."))
-            # We retrieve all of the current opened lines and put them in a set
-            # openLines = list(frontier)
-            # (those lines are now gone from the queue)
-            # frontier = set()
-
-            # For each line in this set
-            # for line in openLines:
             line = frontier.get()
-            feedback.pushInfo(self.tr("Considering open line " + str(line.uniqueID) +
-                                      " Have she fluxed ? " + str(line.haveFluxed) +
-                                      " UpstreamNeighbors have fluxed ? " + str(line.checkIfAllUpstreamHaveFluxed())))
             # If the line have be fluxed by all of its upstream neighbors,
             # we make it flux to its downstream neighbors, and we put the neighbors in the
             # frontier
-            limit += 1
-            if limit > 500:
-                raise QgsProcessingException(self.tr("ERROR: Limit of operations reached."))
             if line.checkIfAllUpstreamHaveFluxed():
                 line.fluxToDownstreamNeighbors(feedback)
                 setOfLinesToReturn.add(line)
                 linesAlreadyConsidered.add(line)
                 neighbors = line.getNeighborsDownstream()
                 if len(neighbors) != 0:
-                    for neighbour in [neighbour for neighbour in neighbors if not neighbour.haveFluxed]:
-                        feedback.pushInfo(self.tr("Considering downstream neighbor " + str(neighbour.uniqueID)))
-                        # We open the neighbours downstream if they are not already
+                    for neighbour in [neighbour for neighbour in neighbors if neighbour not in linesAlreadyConsidered]:
+                        # We open the neighbour downstream if they are not already considered/fluxed.
                         frontier.put(neighbour)
-            # If not, we re-add the line in the frontier. It will have to be considered later.
+            # If not, we re-add the line in the frontier. It will have to be considered later, once
+            # that all of its neighbors are fluxed.
+            # WARNING : This is where the infinite loop can generate if a culvet is created.
             else:
                 frontier.put(line)
 
             feedback.setProgress(100 * (len(setOfLinesToReturn) / len(setOfRoadsAsLines)))
-            #openLines = list()
-            
 
         feedback.pushInfo(self.tr("Preparing outputs..."))
         # Once that all of this is done, we prepare the output.
@@ -280,13 +269,14 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
         for line in setOfLinesToReturn:
             # With the total cost which is the last item in our accumulated cost list,
             # we create the PolyLine that will be returned as a vector.
-            path_feature = RoadTypeFinderHelper.create_path_feature_from_points(line.lineFeature, line.uniqueID, int(math.floor(line.flux)), sink_fields)
+            path_feature = RoadTypeFinderHelper.create_path_feature_from_points(line.lineFeature,
+                                                                                line.uniqueID,
+                                                                                int(math.floor(line.flux)),
+                                                                                sink_fields)
             # Into the sink that serves as our output, we put the PolyLines from the list of lines we created
             # one by one
             sink.addFeature(path_feature, QgsFeatureSink.FastInsert)
 
-        for line in setOfLinesToReturn:
-            feedback.pushInfo("Line has flux value : " + str(line.flux))
         # When all is done, we return our output that is linked to the sink.
         return {self.OUTPUT: dest_id}
 
@@ -351,6 +341,7 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
          
           - Ending points : points that correspond EXACTLY to the ending of the network, meaning its connection to the main road network. WARNING : If those points do not correspond exactly with the end of a line or the end of your network, the algorithm will have problems to complete.
          
+         WARNING : The algorithm WILL MAKE AN INFINITE LOOP if the network is not properly set up for analysis. See documentation or GitHub page to avoid issues.
         """)
 
     def shortDescription(self):
@@ -370,40 +361,43 @@ class LineForAlgorithm:
 
     def __init__(self, lineFeature, ID):
         """Constructor for the line class"""
-        self.uniqueID = ID
-        self.lineFeature = lineFeature # As Polyline gives a list of points
+        self.uniqueID = ID  # Used to identify the line.
+        self.lineFeature = lineFeature  # As Polyline gives a list of points
         # Ending 1 and 2 are QgsPointXY.
         self.ending1 = self.lineFeature[0]
         self.ending2 = self.lineFeature[-1]
+        # These sets are temporary, and replaced by Downstream/upstream once they have been identified.
         self.linesConnectedToEnding1 = set()
         self.linesConnectedToEnding2 = set()
+        # Just boxed to put the above sets in, but properly identified.
         self.linesConnectedDownstream = set()
         self.linesConnectedUpstream = set()
-        self.connections = 0
+        # The flux of wood going through our road
         self.flux = 0
+        # Indicators to know if this line is a leaf or a root of the network
         self.isALeafOfTheNetwork = False
         self.isARootOfTheNetwork = False
+        # Indicator to know if the line have already given its flux to its downstream neighbors, so that it
+        # doesn't do it again by mistake.
         self.haveFluxed = False
-        self.numberOfTimesHaveBeenFluxedIn = 0
 
     def initializeRelationToNetwork(self, listOfLinesForAlgorithm, endingPoints):
         """Initialize the lines that are connected to this line, and we also check if the line is a "leaf" or not"""
 
+        # For all the other lines in the network, we check which one touches the endings of this one.
         for otherLine in listOfLinesForAlgorithm:
             if otherLine.uniqueID != self.uniqueID:
-                if self.ending1.compare(otherLine.ending1,1) or self.ending1.compare(otherLine.ending2,1):
+                if self.ending1.compare(otherLine.ending1, 1) or self.ending1.compare(otherLine.ending2,1):
                     self.linesConnectedToEnding1.add(otherLine)
-                elif self.ending2.compare(otherLine.ending1,1) or self.ending2.compare(otherLine.ending2,1):
+                elif self.ending2.compare(otherLine.ending1, 1) or self.ending2.compare(otherLine.ending2,1):
                     self.linesConnectedToEnding2.add(otherLine)
-
-        self.connections = len(self.linesConnectedToEnding1) + len(self.linesConnectedToEnding2)
 
         # To check if the line is a leaf (an outward ending of the network) or a root, we check if it has an ending
         # without neighbors, and if this ending coincide with an end point. If it does not for any ending point,
         # then the line is a leaf of the network.
         if len(self.linesConnectedToEnding1) == 0:
             for endingPoint in endingPoints:
-                if self.ending1.compare(endingPoint,1):
+                if self.ending1.compare(endingPoint, 1):
                     self.isARootOfTheNetwork = True
                     break
             if not self.isARootOfTheNetwork:
@@ -422,7 +416,10 @@ class LineForAlgorithm:
     # This function will find and register which ending is downstream, and which is upstream.
     # We use a dijkstra search for that.
     def initializeDownstreamDirection(self, endingPoints):
-        # First, we make the case of our line being a leaf or a root
+        """This function will find and register which ending is downstream, and which is upstream.
+           We use a kind of dijkstra search for that."""
+        # First, we make the case of our line being a leaf or a root. If that's the case, it's relatively
+        # easy to deduce where is the downstream or the upstream.
         if self.isALeafOfTheNetwork:
             if len(self.linesConnectedToEnding1) == 0:
                 self.linesConnectedDownstream = self.linesConnectedToEnding2
@@ -439,12 +436,16 @@ class LineForAlgorithm:
                 self.linesConnectedUpstream = self.linesConnectedToEnding1
         else:
             # Now for the case of a line which is not a root, or a leaf.
-            # We randomly take one of the endings of our line.
-            # We start a kind of dijkstra search (we are not looking for least cost path)
-            # : we get all of the neighbouring lines from this point
+            # To find upstream and downstream, we randomly take one of the endings of our line (the ending1).
+            # Then, we start a kind of dijkstra search (we are not looking for least cost path) until we find
+            # a root line or not. If we find it, then ending1 is in the direction of downstream; if not, it is
+            # upstream.
+
+            # To start the search, we look at the neighbours touching the Ending1.
             frontier = queue.Queue()
             for line in self.linesConnectedToEnding1:
                 frontier.put(line)
+            # We initialize a set that will allow us to avoid looping in the search.
             linesAlreadyConsidered = set()
             linesAlreadyConsidered.add(self)
             foundRoot = False
@@ -463,7 +464,7 @@ class LineForAlgorithm:
                         frontier = queue.Queue()
                         foundRoot = True
                         break
-                    # If not, we keep the search going on.
+                    # If not, we keep the search going on and add the neighbour to be looked at.
                     else:
                         frontier.put(neighbour)
             # If we didn't found the root during the search, that means that ending 1 is not downstream. He must then
@@ -509,24 +510,14 @@ class LineForAlgorithm:
         if not self.haveFluxed:
             downStreamNeighbors = self.getNeighborsDownstream()
             for neighbour in downStreamNeighbors:
-                feedback.pushInfo("Flushing line " + str(self.uniqueID) + " of flux value : " + str(self.flux)
-                                  + " into a neighbour " + str(neighbour.uniqueID) + " of flux value : " + str(
-                    neighbour.flux)
-                                  + " and division of flux of " + str(len(downStreamNeighbors)))
                 neighbour.flux = neighbour.flux + (self.flux / len(downStreamNeighbors))
-                neighbour.numberOfTimesHaveBeenFluxedIn += 1
-                feedback.pushInfo("Neighbor " + str(neighbour.uniqueID) + " now has a flux of : " + str(neighbour.flux))
-                feedback.pushInfo(
-                    "In total, neighbor has been fluxed in " + str(neighbour.numberOfTimesHaveBeenFluxedIn)
-                    + " times.")
-
+                # If their is a negative flux, something is really wrong. We raise an exception.
                 if neighbour.flux < 0:
                     raise QgsProcessingException("ERROR: A line flux became negative ! We were trying to add a flux of"
-                                                 "quantity " + str(
-                        (self.flux / len(downStreamNeighbors))) + "from the line"
-                                                 + " that is between the points " + str(self.ending1) + " and "
-                                                 + str(self.ending2) + " and to the line that is between the points "
-                                                 + str(neighbour.ending1) + " and " + str(neighbour.ending2))
+                                                 "quantity " + str((self.flux / len(downStreamNeighbors)))
+                                                 + "from the line that is between the points " + str(self.ending1)
+                                                 + " and " + str(self.ending2) + " and to the line that is between the"
+                                                 " points " + str(neighbour.ending1) + " and " + str(neighbour.ending2))
 
             self.haveFluxed = True
 
@@ -550,6 +541,7 @@ class LineForAlgorithm:
 # Methods to help the algorithm; all static, do not need to initialize an object of this class.
 class RoadTypeFinderHelper:
 
+    # Function to create the fields for the attributes that we register with the lines.
     @staticmethod
     def create_fields():
         # Create an ID field to identify the lines
