@@ -339,7 +339,7 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
         
           - Road Network : a forest road network where every line is split at intersections. They can be splitted even more, but they HAVE to be splitted at intersections. You can use the "Split with lines" tools for that in QGIS.
          
-          - Ending points : points that correspond EXACTLY to the ending of the network, meaning its connection to the main road network. WARNING : If those points do not correspond exactly with the end of a line or the end of your network, the algorithm will have problems to complete.
+          - Ending points : points that correspond EXACTLY to the ending of the network, meaning its connection to the main road network. WARNING : If those points do not correspond exactly with the end of a line or the end of your network, the algorithm will have problems to complete. You can use the "Line intersections" tool for that in QGIS.
          
          WARNING : The algorithm WILL MAKE AN INFINITE LOOP if the network is not properly set up for analysis. See documentation or GitHub page to avoid issues.
         """)
@@ -474,15 +474,17 @@ class LineForAlgorithm:
                 self.linesConnectedUpstream = self.linesConnectedToEnding1
 
         # If the function ended without use being able to determine at least a upstream or a downstream,
-        # this is a problem. We raise an exception with details about the line.
+        # this could be a problem. We raise an exception with details about the line.
         if len(self.linesConnectedDownstream) == 0 and len(self.linesConnectedUpstream) == 0:
             raise QgsProcessingException("ERROR: For a certain line, Upstream and Downstream could not be determined."
                                          "Problematic line is between those two points : " + str(self.ending1)
-                                         + " and " + str(self.ending2))
+                                         + " and " + str(self.ending2) + ". Please check if your network have been cut into"
+                                        "pieces via the \"split lines with lines\" tool of QGIS.")
         if len(self.linesConnectedDownstream) == 0 and not self.isARootOfTheNetwork:
             raise QgsProcessingException("ERROR: For a certain line that is not a root, Downstream could not be determined."
                                          "Problematic line is between those two points : " + str(self.ending1)
-                                         + " and " + str(self.ending2))
+                                         + " and " + str(self.ending2) + ". Please check if your network have been cut into"
+                                        "pieces via the \"split lines with lines\" tool of QGIS.")
 
     def getNeighborsDownstream(self):
         """For this function to work, the network initialization must be done. Also, it must be called during

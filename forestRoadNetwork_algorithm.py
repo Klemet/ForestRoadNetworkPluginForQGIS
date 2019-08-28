@@ -244,6 +244,27 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         if sink is None:
             raise QgsProcessingException(self.invalidSinkError(parameters, self.OUTPUT))
 
+        # We check if the raster has been read correctly
+        feedback.pushInfo(self.tr("The extent of the raster is : " + cost_raster.dataProvider().extent().asWktCoordinates()))
+        # We put the data of the raster into a variable that we will send to the algorithm.
+        block = MinCostPathHelper.get_all_block(cost_raster, cost_raster_band)
+        # We transform the raster data into a matrix and check if the matrix contains negative values
+        # CAREFUL : The matrix is created in a raster coordinate systems; rows (y axis) start at the top
+        # and go to the bottom. This implies a transformation when getting back the values from a cartesian
+        # system (rows go from bottom to top)
+        matrix, contains_negative = MinCostPathHelper.block2matrix(block)
+        # We display a feedback on the loading of the raster, or we display an error if needed
+        if block.height() == 0 or block.width() == 0:
+            raise QgsProcessingException(self.tr("ERROR: The raster couldn't be read properly (0 rows or 0 columns). "
+                                                 "This is often due to the raster being too big. "
+                                                 "Try to lower the resolution of your raster, and/or limit it to the"
+                                                 "extnt of your data."))
+        feedback.pushInfo(self.tr("The size of the cost raster is: %d * %d pixels") % (block.height(), block.width()))
+
+        # If there are negative values in the raster, we make an issue.
+        if contains_negative:
+            raise QgsProcessingException(self.tr("ERROR: Cost raster contains negative value."))
+
         feedback.pushInfo("Scanning the polygons to reach...")
         # First of all : We transform the starting polygons into cells on the raster (coordinates
         # in rows and colons).
@@ -271,20 +292,6 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
             raise QgsProcessingException(self.tr("ERROR: Some polygons to reach are overlapping with roads "
                                                  "to connect to given this resolution."))
         feedback.pushInfo("Roads scanned !")
-
-        # We put the data of the raster into a variable that we will send to the algorithm.
-        block = MinCostPathHelper.get_all_block(cost_raster, cost_raster_band)
-        # We transform the raster data into a matrix and check if the matrix contains negative values
-        # CAREFUL : The matrix is created in a raster coordinate systems; rows (y axis) start at the top
-        # and go to the bottom. This implies a transformation when getting back the values from a cartesian
-        # system (rows go from bottom to top)
-        matrix, contains_negative = MinCostPathHelper.block2matrix(block)
-        # We display a feedback on the loading of the raster
-        feedback.pushInfo(self.tr("The size of the cost raster is: %d * %d pixels") % (block.height(), block.width()))
-
-        # If there are negative values in the raster, we make an issue.
-        if contains_negative:
-            raise QgsProcessingException(self.tr("ERROR: Cost raster contains negative value."))
 
         # Before we start, we need to order the nodes with the chosen heuristic.
         # We create a list that we are going to order.
@@ -349,8 +356,11 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
                     if feedback.isCanceled():
                         raise QgsProcessingException(self.tr("ERROR: Search canceled."))
                     else:
-                        raise QgsProcessingException(
-                            self.tr("ERROR: The end-point(s) is not reachable from start-point."))
+                        feedback.pushInfo(self.tr("WARNING : The end-point(s) is not reachable from start-point (" + str(nodeToReach[0]) +
+                                                  ", " + str(nodeToReach[1]) + ")."))
+                        # raise QgsProcessingException(
+                            # self.tr("ERROR: The end-point(s) is not reachable from start-point (" + nodeToReach[1] +
+                                    # ", " + nodeToReach[2] + ")."))
                 # When the road is done by the Dijkstra algorithm, we put the path and the cost
                 # in the list of results
                 listOfResults.append((min_cost_path, costs[-1]))
@@ -615,7 +625,7 @@ class MinCostPathHelper:
         id_field = QgsField("Construction order", QVariant.Int, "integer", 10, 3)
         # Create the field of "total cost" by indicating name, type, typeName,
         # lenght and precision (decimals in that case)
-        cost_field = QgsField("Total cost", QVariant.Double, "double", 10, 3)
+        cost_field = QgsField("Total cost", QVariant.Double, "double", 15, 3)
         # Then, we create a container of multiple fields
         fields = QgsFields()
         # We add the fields to the container
