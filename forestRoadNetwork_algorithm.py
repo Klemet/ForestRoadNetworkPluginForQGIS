@@ -339,33 +339,41 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
 
         for nodeToReach in list_of_nodes_to_reach:
             feedbackProgress += 1
-            # First, we check the distance between the node and the nodes to connect to,
-            # to see if it's not at a skidding distance of it.
-            minimalDistanceToNodesToConnect = MinCostPathHelper.minimum_distance_to_a_node(nodeToReach,
-                                                                                           set_of_nodes_to_connect_to,
-                                                                                           cost_raster)
-            # If it's superior, we create a road to this node
-            if minimalDistanceToNodesToConnect > skidding_distance:
-                start_row_col = nodeToReach
-                end_row_cols = list(set_of_nodes_to_connect_to)
-                min_cost_path, costs, selected_end = dijkstra(start_row_col, end_row_cols, matrix, cost_raster,
-                                                              feedback)
-                # If there was a problem, we indicate if it's because the search was cancelled by the user
-                # or if there was no end point that could be reached.
-                if min_cost_path is None:
-                    if feedback.isCanceled():
-                        raise QgsProcessingException(self.tr("ERROR: Search canceled."))
+
+            # If the node to reach is inside a no-value pixel, no need to look at it.
+            if matrix[(len(matrix)-1)-nodeToReach[0]][nodeToReach[1]] is not None:
+                # First, we check the distance between the node and the nodes to connect to,
+                # to see if it's not at a skidding distance of it.
+                minimalDistanceToNodesToConnect = MinCostPathHelper.minimum_distance_to_a_node(nodeToReach,
+                                                                                               set_of_nodes_to_connect_to,
+                                                                                               cost_raster)
+                # If it's superior, we create a road to this node
+                if minimalDistanceToNodesToConnect > skidding_distance:
+                    start_row_col = nodeToReach
+                    end_row_cols = list(set_of_nodes_to_connect_to)
+                    min_cost_path, costs, selected_end = dijkstra(start_row_col, end_row_cols, matrix, cost_raster,
+                                                                  feedback)
+                    # If there was a problem, we indicate if it's because the search was cancelled by the user
+                    # or if there was no end point that could be reached.
+                    if min_cost_path is None:
+                        if feedback.isCanceled():
+                            raise QgsProcessingException(self.tr("ERROR: Search canceled."))
+                        else:
+                            pointToReach = MinCostPathHelper._row_col_to_point(nodeToReach, cost_raster)
+                            feedback.pushInfo(self.tr("WARNING : The end-points are not reachable from start-point" +
+                                                      pointToReach.toString() + ". It might be because the point is in"
+                                                      + "a no-value pixel, or because it is surrounded by no-value pixels."
+                                                      + "Please check your cost raster."))
+                            # raise QgsProcessingException(
+                                # self.tr("ERROR: The end-point(s) is not reachable from start-point (" + nodeToReach[1] +
+                                        # ", " + nodeToReach[2] + ")."))
+                    # If there wasn't a problem, we save the results
                     else:
-                        feedback.pushInfo(self.tr("WARNING : The end-point(s) is not reachable from start-point (" + str(nodeToReach[0]) +
-                                                  ", " + str(nodeToReach[1]) + ")."))
-                        # raise QgsProcessingException(
-                            # self.tr("ERROR: The end-point(s) is not reachable from start-point (" + nodeToReach[1] +
-                                    # ", " + nodeToReach[2] + ")."))
-                # When the road is done by the Dijkstra algorithm, we put the path and the cost
-                # in the list of results
-                listOfResults.append((min_cost_path, costs[-1]))
-                # We also add the nodes of the created path to the set of nodes that can be reached now
-                set_of_nodes_to_connect_to.update(min_cost_path)
+                        # When the road is done by the Dijkstra algorithm, we put the path and the cost
+                        # in the list of results
+                        listOfResults.append((min_cost_path, costs[-1]))
+                        # We also add the nodes of the created path to the set of nodes that can be reached now
+                        set_of_nodes_to_connect_to.update(min_cost_path)
 
             feedback.setProgress(100 * (feedbackProgress / len(list_of_nodes_to_reach)))
 
