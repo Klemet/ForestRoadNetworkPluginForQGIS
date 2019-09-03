@@ -262,13 +262,14 @@ class RoadTypeFinderAlgorithm(QgsProcessingAlgorithm):
         # Then, we initialize the flux of wood that is going to go from each road. For that, we use the polygons
         # given by the user.
 
+        feedback.pushInfo(self.tr("Analyzing harvested areas..."))
         # First, thanks to the polygon extent and the wood density parameter, we will define the "points" inside the
         # polygons from which the wood flux will come from.
+        pointsOfWoodGeneration = RoadTypeFinderHelper.polygonsToPoints(polygons_cutted, wood_density, feedback)
 
-
-
+        feedback.pushInfo(self.tr("Generating wood flux from harvested areas..."))
         # Then, for each of these points, we find the closest line; we add one unit of timber flux to this line.
-
+        RoadTypeFinderHelper.generateWoodFlux(setOfRoadsAsLines, pointsOfWoodGeneration, feedback)
 
         # Now, we can compute the fluxes that go through the network.
         # We will start with the "leaves" of the network, from which the wood will come.
@@ -436,10 +437,10 @@ class LineForAlgorithm:
         # doesn't do it again by mistake.
         self.haveFluxed = False
 
-    # def __lt__(self, other):
-        # """"Function needed to compare two lines, if there priority in a priority queue are equal. Usefull for the
-        # dijkstra search below."""
-        # return self.uniqueID < other.uniqueID
+    def __lt__(self, other):
+        """"Function needed to compare two lines, if there priority in a priority queue are equal. Usefull for the
+        dijkstra search below."""
+        return self.uniqueID < other.uniqueID
 
     def initializeRelationToNetwork(self, listOfLinesForAlgorithm, endingPoints):
         """Initialize the lines that are connected to this line, and we also check if the line is a "leaf" or not"""
@@ -462,7 +463,7 @@ class LineForAlgorithm:
                     break
             if not self.isARootOfTheNetwork:
                 self.isALeafOfTheNetwork = True
-                self.flux = 1
+                # self.flux = 1
 
         elif len(self.linesConnectedToEnding2) == 0:
             for endingPoint in endingPoints:
@@ -471,7 +472,7 @@ class LineForAlgorithm:
                     break
             if not self.isARootOfTheNetwork:
                 self.isALeafOfTheNetwork = True
-                self.flux = 1
+                # self.flux = 1
 
     # This function will find and register which ending is downstream, and which is upstream.
     # We use a dijkstra search for that.
@@ -600,9 +601,7 @@ class LineForAlgorithm:
                             predecessors[neighbour] = predecessorWeMightKeep
                     else:
                         predecessors[neighbour] = curentLine
-
-                        priorityTuple = (neighbour._distanceToStart(self, predecessors, feedback), neighbour)
-                        frontier.put(priorityTuple)
+                        frontier.put((neighbour._distanceToStart(self, predecessors, feedback), neighbour))
 
         # If we didn't found the root during the search, we return empty results.
         results["found"] = False
@@ -706,6 +705,101 @@ class LineForAlgorithm:
 # Methods to help the algorithm; all static, do not need to initialize an object of this class.
 class RoadTypeFinderHelper:
 
+    @staticmethod
+    def polygonsToPoints(polygonLayer, pointsResolution, feedback):
+        """This function transforms a given polygon layer into a set
+        of QGS points according to a given resolution of points."""
+
+        # We take all of the polygons from the polygon layer
+        featuresOfLayer = list(polygonLayer.getFeatures())
+        setOfPolygons = list()
+
+        for given_feature in featuresOfLayer:
+            if given_feature.hasGeometry():
+                given_feature = given_feature.geometry()
+
+                # Case of multipolygons
+                if given_feature.wkbType() == QgsWkbTypes.MultiPolygon:
+                    multi_polygon = given_feature.asMultiPolygon()
+                    for polygon in multi_polygon:
+                        setOfPolygons.append(polygon)
+
+                # Case of polygons
+                elif given_feature.wkbType() == QgsWkbTypes.Polygon:
+                    polygon = given_feature.asPolygon()
+                    setOfPolygons.append(polygon)
+
+        setOfPointsToReturn = set()
+        progress = 0
+        feedback.setProgress(0)
+
+        # Then, for each polygon, we will determine points that will correspond to a source
+        # of one arbitrary unit of wood, according to the resolution given by the user.
+        for polygon in setOfPolygons:
+            # For that, we take the extent of the polygon layer;
+            extentOfPolygon = QgsGeometry.fromPolygonXY(polygon).boundingBox()
+
+            # Then, we loop around x and y coordinates according to the wood density parameter
+            leftX = extentOfPolygon.xMinimum()
+            rightX = extentOfPolygon.xMaximum()
+            bottomY = extentOfPolygon.yMinimum()
+            upperY = extentOfPolygon.yMaximum()
+
+            # Now, we loop around the coordinates of the extent, with the resolution indicated by the user
+            listOfXCoordinates = [(x * float(pointsResolution)) + leftX for x in
+                              range(0, int((rightX - leftX) / pointsResolution))]
+            listOfYCoordinates = [(y * float(pointsResolution)) + bottomY for y in
+                              range(0, int((upperY - bottomY) / pointsResolution))]
+
+            for x in listOfXCoordinates:
+                # feedback.pushInfo("Coordinate x : " + str(x))
+                for y in listOfYCoordinates:
+                    # feedback.pushInfo("Coordinate y : " + str(y))
+                    if feedback.isCanceled():
+                        raise QgsProcessingException("ERROR: Process canceled.")
+                    # for polygon in setOfPolygons:
+                        # feedback.pushInfo("Polygon : " + str(QgsGeometry.fromPolygonXY(polygon).asWkt()))
+                    point = QgsPointXY(x, y)
+                    if QgsGeometry.fromPolygonXY(polygon).contains(point):
+                        # feedback.pushInfo("We added a point !")
+                        setOfPointsToReturn.add(point)
+                    # else:
+                        # feedback.pushInfo("We did not add a point !")
+                    progress += 1
+                    # feedback.setProgress(100 * progress / (len(listOfXCoordinates) * len(listOfYCoordinates)))
+
+            feedback.setProgress(100 * progress / (len(setOfPolygons)))
+
+        return setOfPointsToReturn
+
+    @staticmethod
+    def generateWoodFlux(setOfRoadsAsLines, pointsOfWoodGeneration, feedback):
+        """This function links the points from where the wood will come from in the network
+        to the lines created in the algorithm"""
+
+        progress = 0
+        feedback.setProgress(0)
+
+        # For each point generated
+        for point in pointsOfWoodGeneration:
+            # First, we get the closest line for this point
+            distanceBetweenPointAndLines = dict()
+            for line in setOfRoadsAsLines:
+                minimalDistanceForLine = float("inf")
+                # for a given line, we look at the points composing it; for each, we look at the distance
+                # with the given point
+                for pointOfLine in line.lineFeature:
+                    if minimalDistanceForLine > point.distance(pointOfLine):
+                        minimalDistanceForLine = point.distance(pointOfLine)
+                # We indicate the distance between this line and the point
+                distanceBetweenPointAndLines[line] = minimalDistanceForLine
+            closestLine = min(distanceBetweenPointAndLines, key=distanceBetweenPointAndLines.get)
+            # Then, we add a wood flux of "1" from this point to this line
+            closestLine.flux += 1
+            # feedback.pushInfo("Added 1 flux to line : " + str(closestLine.uniqueID))
+
+            feedback.setProgress(100 * progress / (len(pointsOfWoodGeneration)))
+
     # Function to create the fields for the attributes that we register with the lines.
     @staticmethod
     def create_fields():
@@ -745,5 +839,7 @@ class RoadTypeFinderHelper:
         # We add the geometry to the feature
         feature.setGeometry(polyline)
         return feature
+
+
 
 
