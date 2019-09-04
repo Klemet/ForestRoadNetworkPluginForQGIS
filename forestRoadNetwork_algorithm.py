@@ -412,7 +412,7 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         lowercase alphanumeric characters only and no spaces or other
         formatting characters.
         """
-        return 'Forest Road Network creation'
+        return 'Forest Road Network Creation'
 
     def displayName(self):
         """
@@ -436,7 +436,7 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         contain lowercase alphanumeric characters only and no spaces or other
         formatting characters.
         """
-        # We don't need it right now, as our plugin only have one algorithm
+        # Not enough algorithms in this plugin for the need to make groups of algorithms
         return ''
 
     # Function used for translation. Called every time something needs to be
@@ -448,8 +448,7 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         return ForestRoadNetworkAlgorithm()
 
     def helpUrl(self):
-        # No help URL for now; Github of the project could be nice once done.
-        return ''
+        return 'https://github.com/Klemet/ForestRoadNetworkPluginForQGIS'
 
     def shortHelpString(self):
         return self.tr("""
