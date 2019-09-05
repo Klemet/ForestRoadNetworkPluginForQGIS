@@ -472,7 +472,7 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
 
           - Polygons that will indicates the zones where temporary road must be built in priority (optional) : straight-forward.
 
-          - Attribute field of the priority polygons layer that contains the priority number associated to the polygons : straight-forward.
+          - Attribute field of the priority polygons layer that contains the priority number associated to the polygons : the higher the number, the higher the priority will be. If no priority polygons or fields are indicated, then the algorithm will prioritize small roads for becoming temporary.
 
           - Threshold of wood flux under which a forest road will be a tertiary road, and over it a secondary road : straight-forward.
           

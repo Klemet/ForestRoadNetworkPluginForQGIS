@@ -28,18 +28,7 @@
  
  Once installed, it can be found in the category "Vector", or via searching in the toolbox (Name : "Forest Road Network Creation")
  
- To launch the algorithm, you need to provide 5 things :
- 
- - A cost raster and the band containing the cost data. All data should be non-negative numbers. NoData values will be considered not passable by the algorithm. The cost in a pixel should ideally represent the cost of building a road when crossing that pixel.
- 
- - A polygon layer containing the polygons to reach. Ideally, they should be forest stands that need to be reached in order to be harvest. However, they can be other areas that need to be reached by roads.
- 
- - A layer containing an existing road network to connect the polygons to reach to. In the example of forest roads network, this can be primary roads, or roads leading to sawmills.
- 
- - A skidding distance, onto which no roads is necessary to transport the wood. It should be expressed in CRS units. 
- 
- - The heuristic used to generate the network. Generating an optimal network is very, very complex; especially when the notion of "optimal" change from situation from situation. For the algorithm to work in a reasonable amount of time, we use a heuristic to determine in which order the "nodes" inside the polygons (that represent pixels of the raster that are inside the polygons) must be considered. For each node, the least cost path to an existing road will be created. Thus, according to the chosen heuristic (random; closest first; furthest first), the generated network will be different. This method is used in professional softwares, such as Remsoft. However, we do not expect this plugin to be as complete and as powerful as professional softwares. 
- 
+ Each of the algorithms in the plugin have different inputs, described in their corresponding interface in detail.
  
  2) WARNINGS
  
@@ -47,4 +36,5 @@
  
  This plugin is not intended for operational planning; it can be used for strategic planning (exploration of options) of for theoretical exercises.
 
-We recommand that networks to be created with all of the different heuristics so as to compare them, and identify key differences that will lead to a better understanding of the landscape for the creation of forest roads. 
+ We recommand that networks to be created with all of the different heuristics so as to compare them, and identify key differences that will lead to a better understanding of the landscape for the creation of forest roads.
+ However, in our experience, the "Closest First" heuristic produces the most "realistic" forest road networks, as they correlate the most with existing forest roads.

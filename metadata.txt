@@ -9,9 +9,9 @@
 [general]
 name=Forest Roads Network
 qgisMinimumVersion=3.0
-description=A plugin to create a vectorial network of forest roads based on a cost raster and zones to reach.
-about=This plugin contains an algorithm allowing you to create a vectorial network of forest roads according to a cost matrix, polygons to reach (like forest stands), and an existing road network to connect them to. A skidding distance can be given as an input so as to not create a road to a place that has a road already nearby. It uses the dijkstra algorithm in addition to a heuristic for the order in which the nodes to reach (inside your polygons) are going to be considered. It is not made for operational road planning, but rather strategical planning or theoretical exercises.
-version=1.2
+description=A plugin to create a vectorial network of forest roads of different types according to the flux of timber going through them.
+about=This plugin contains several algorithms to allow the user to simply create a forest road network optimized in space to reduce construction costs. However, remember that it is not made for operational road planning, but rather strategical planning or theoretical exercises. A first algorithm creates the network using a cost raster; the second determine how the wood will flow throught the network. The third determine the type of forest road (primary, secondary, etc.) according to those flux of wood and zones where temporary roads must be prioritized.
+version=1.3
 author=Clément Hardy
 email=clem.hardy@outlook.fr
 
@@ -25,6 +25,7 @@ repository=https://github.com/Klemet/ForestRoadNetworkPluginForQGIS
 changelog=1.0 - First stable version
 	      1.1 - Algorithm for road type determination added
 		  1.2 - Names of the algorithms changed; wood flux algorithm complete
+		  1.3 - Road type determination algorithm complete
 
 # Tags are comma separated with spaces allowed
 tags=least cost path distance raster analysis road

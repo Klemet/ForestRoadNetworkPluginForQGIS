@@ -44,6 +44,16 @@ Using a hydrological approach coupled with the calculation of the least-cost pat
 **Example of result from the "Wood Flux Determination" algorithm**
 ![Result](Test_data/images/WoodFluxDetermination_Result.png)
 
+## The "Road Type Determination" algorithm
+
+This algorithm use the previously created forest road network where the wood flux are calculated, and optionally polygons to determine zones where temporary roads should be built as much as possible.
+The user must also indicate thresholds of wood flux to select the right road type for each forest road; and optionally, a percentage of tertiary roads that can be accommodated as temporary roads.
+
+**Interface of the "Road Type Determination" algorithm**
+![Interface](Test_data/images/RoadTypeDetermination_Interface.PNG)
+**Example of result from the "Road Type Determination" algorithm**
+![Result](Test_data/images/RoadTypeDetermination_Result.png)
+
 
 ## Author
 
