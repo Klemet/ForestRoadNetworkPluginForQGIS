@@ -69,14 +69,6 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
     Class that described the algorithm, that will be launched
     via the provider, itself launched via initialization of
     the plugin.
-
-    The algorithm takes 4 entries :
-
-    - A cost raster
-    - The raster band to use for the cost
-    - The layer with the polygons of zones to access
-    - The layer with the roads (lines) that they can be connected to
-    by the generated roads
     """
 
     # Constants used to refer to parameters and outputs. They will be
@@ -177,7 +169,7 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
-                self.tr('Output for the forest road network')
+                self.tr('Output file of the algorithm')
             )
         )
 
@@ -212,8 +204,6 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
                 )
         else:
             temporary_roads_priority_polygons = None
-
-
 
         if self.parameterAsString(
             parameters,
@@ -304,14 +294,20 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
         lineFeaturesOfRoadNetwork = list(road_network.getFeatures())
 
         # We check if each line have a flux value associated with it
+        progress = 0
+        feedback.setProgress(0)
         for line in lineFeaturesOfRoadNetwork:
             attributesOfLine = line.attributes()
             if attributesOfLine[flux_field_index] == 0 or attributesOfLine[flux_field_index] is None:
                 raise QgsProcessingException(self.tr("ERROR: Some lines are missing a flux value ! Please make sure" +
                                                      " that all lines have a value of flux of wood superior to 0 in " +
                                                      "the field that you indicated."))
+            progress += 1
+            feedback.setProgress(100 * (progress / len(lineFeaturesOfRoadNetwork)))
 
         # If the user gave priority polygons, we also check them to see if one of them is missing a priority
+        progress = 0
+        feedback.setProgress(0)
         if temporary_roads_priority_polygons is not None:
             polygoneFeatures = list(temporary_roads_priority_polygons.getFeatures())
 
@@ -322,8 +318,12 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
                         self.tr("ERROR: Some polygons are missing a priority value ! Please make sure" +
                                 " that all polygons have a value of priority for temporary roads superior to 0 in " +
                                 "the field that you indicated."))
+                progress += 1
+                feedback.setProgress(100 * (progress / len(polygoneFeatures)))
 
         feedback.pushInfo(self.tr("Calculating the broad types of roads..."))
+        progress = 0
+        feedback.setProgress(0)
         # We now determine the broad type for each road.
         typeOfRoad = dict()
 
@@ -336,7 +336,12 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
                 typeOfRoad[line] = "Secondary"
             else:
                 typeOfRoad[line] = "Tertiary"
+            progress += 1
+            feedback.setProgress(100 * (progress / len(lineFeaturesOfRoadNetwork)))
 
+
+        progress = 0
+        feedback.setProgress(0)
         # Now, to know which tertiary road can become temporary ones
         # First, we get all of the roads that have been indicated as tertiary.
         tertiaryLines = list()
@@ -372,6 +377,8 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
                 typeOfRoad[currentRoad] = "Temporary"
                 index += 1
                 percentageOfLengthConverted += (currentRoad.geometry().length() / totalLengthOfTertiaryRoads) * 100
+                progress += 1
+                feedback.setProgress(100 * (percentageOfLengthConverted / temporaryRoadPercentage))
 
         feedback.pushInfo(self.tr("Creating the output..."))
         # Once that all of this is done, we prepare the output.

@@ -66,14 +66,6 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
     Class that described the algorithm, that will be launched
     via the provider, itself launched via initialization of
     the plugin.
-
-    The algorithm takes 4 entries :
-
-    - A cost raster
-    - The raster band to use for the cost
-    - The layer with the polygons of zones to access
-    - The layer with the roads (lines) that they can be connected to
-    by the generated roads
     """
 
     # Constants used to refer to parameters and outputs. They will be
@@ -134,7 +126,7 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
-                self.tr('Output for the forest road network')
+                self.tr('Output of the algorithm')
             )
         )
 

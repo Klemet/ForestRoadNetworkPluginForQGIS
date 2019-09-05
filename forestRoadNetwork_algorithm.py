@@ -149,7 +149,7 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
-                self.tr('Output for the forest road network')
+                self.tr('Output of the algorithm')
             )
         )
 
