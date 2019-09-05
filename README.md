@@ -47,10 +47,10 @@ Using a hydrological approach coupled with the calculation of the least-cost pat
 
 ## Author
 
-Clément Hardy
-PhD Student at the Université du Québec à Montréal
+[Clément Hardy - PhD Student at the Université du Québec à Montréal](http://www.cef-cfr.ca/index.php?n=Membres.ClementHardy)
 
 Mail : clem.hardy@outlook.fr
+
 
 
 ## Acknowledgments

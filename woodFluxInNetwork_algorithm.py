@@ -99,7 +99,7 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFeatureSource(
                 self.INPUT_ROAD_NETWORK,
-                self.tr('Road network whose road types must be determined'),
+                self.tr('Forest Road network whose road flux must be determined'),
                 [QgsProcessing.TypeVectorLine]
             )
         )
@@ -173,11 +173,16 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
         # helper text for when a source cannot be evaluated
         if road_network is None:
             raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT_ROAD_NETWORK))
+        if polygons_cutted is None:
+            raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT_POLYGONS_CUTTED))
+        if wood_density is None:
+            raise QgsProcessingException(self.invalidSourceError(parameters, self.WOOD_DENSITY))
         if ending_points is None:
             raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT_ENDING_POINTS))
 
         # We try to see if there are divergence between the CRSs of the inputs
-        if road_network.crs() != ending_points.sourceCrs():
+        if road_network.crs() != ending_points.sourceCrs() or road_network.crs() != polygons_cutted.sourceCrs()\
+                or ending_points.crs() != polygons_cutted.sourceCrs():
             raise QgsProcessingException(self.tr("ERROR: The input layers have different CRSs."))
 
         # We initialize the "sink", an object that will make use able to create an output.
@@ -793,8 +798,8 @@ class WoodFluxHelper:
             closestLine = min(distanceBetweenPointAndLines, key=distanceBetweenPointAndLines.get)
             # Then, we add a wood flux of "1" from this point to this line
             closestLine.flux += 1
+            progress += 1
             # feedback.pushInfo("Added 1 flux to line : " + str(closestLine.uniqueID))
-
             feedback.setProgress(100 * progress / (len(pointsOfWoodGeneration)))
 
     # Function to create the fields for the attributes that we register with the lines.

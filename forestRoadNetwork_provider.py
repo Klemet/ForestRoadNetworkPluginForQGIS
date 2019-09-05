@@ -37,6 +37,7 @@ __copyright__ = '(C) 2019 by Clement Hardy'
 from qgis.core import QgsProcessingProvider
 from .forestRoadNetwork_algorithm import ForestRoadNetworkAlgorithm
 from .woodFluxInNetwork_algorithm import woodFluxAlgorithm
+from .RoadTypeDetermination_algorithm import roadTypeAlgorithm
 
 
 class forestRoadNetworkProvider(QgsProcessingProvider):
@@ -50,7 +51,7 @@ class forestRoadNetworkProvider(QgsProcessingProvider):
         # We load the algorithms that the plugin is
         # going to use while creating the provider.
         # We initialize it at the same time.
-        self.alglist = [ForestRoadNetworkAlgorithm(), woodFluxAlgorithm()]
+        self.alglist = [ForestRoadNetworkAlgorithm(), woodFluxAlgorithm(), roadTypeAlgorithm()]
 
     def unload(self):
         """
