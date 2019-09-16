@@ -32,6 +32,8 @@ __copyright__ = '(C) 2019 by Clement Hardy'
 
 # We load every function necessary from the QIS packages.
 import random
+from .kdtree import KDTree
+import numpy as np
 from PyQt5.QtCore import QCoreApplication, QVariant
 from PyQt5.QtGui import QIcon
 from qgis.core import (
@@ -258,7 +260,7 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
             raise QgsProcessingException(self.tr("ERROR: The raster couldn't be read properly (0 rows or 0 columns). "
                                                  "This is often due to the raster being too big. "
                                                  "Try to lower the resolution of your raster, and/or limit it to the"
-                                                 "extnt of your data."))
+                                                 "extent of your data."))
         feedback.pushInfo(self.tr("The size of the cost raster is: %d * %d pixels") % (block.height(), block.width()))
 
         # If there are negative values in the raster, we make an issue.
@@ -308,15 +310,39 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
 
             feedback.pushInfo("Computing distances between polygons and roads...(This can take some time !)")
             feedbackProgress = 0
+
+            # To quickly calculate the distance from the existing roads to each node in our polygons, we will use
+            # the k-d tree function from Scipy.
+            # For that, we need to make an Numpy array containing our road nodes
+            pointsToReach = list()
+            for node in set_of_nodes_to_connect_to:
+                nodeToPoint = MinCostPathHelper._row_col_to_point(node, cost_raster)
+                pointsToReach.append(nodeToPoint)
+            numpyArrayOfRoadPoints = np.array(pointsToReach)
+            spatialKDTREEForDistanceSearch = KDTree(numpyArrayOfRoadPoints, leafsize=20)
+
+            # Then, we search and find the distance from current roads for each point.
             for node in list_of_nodes_to_reach:
-                minimalDistance = MinCostPathHelper.minimum_distance_to_a_node(node,
-                                                                               set_of_nodes_to_connect_to,
-                                                                               cost_raster)
+                # feedback.pushInfo("For node " + str(node) + "...")
+
+                # Obsolete with the use of the k-d tree.
+                # minimalDistance = MinCostPathHelper.minimum_distance_to_a_node(node,
+                                                                               # set_of_nodes_to_connect_to,
+                                                                               # cost_raster)
+                # feedback.pushInfo("Brute force gives minimal distance : " + str(minimalDistance))
+
+                # We now make a query to the tree to find the closest node of the tree to the given node.
+                nodeAsPoint = MinCostPathHelper._row_col_to_point(node, cost_raster)
+                minimalDistance = spatialKDTREEForDistanceSearch.query(nodeAsPoint)[0]
+                # feedback.pushInfo("K-D Tree gives minimal distance : " + str(minimalDistance))
+
+                # We add the distance to a tuple, so that we can classify the node afterward.
                 list_of_nodes_to_reach_with_order.append((minimalDistance, node))
                 feedbackProgress += 1
                 feedback.setProgress(100 * (feedbackProgress / len(list_of_nodes_to_reach)))
                 if feedback.isCanceled():
                     raise QgsProcessingException(self.tr("ERROR: Operation was cancelled."))
+
             feedback.pushInfo("Computing distances is done !")
 
             # We then sort according to this distance, in increasing or decreasing order.
@@ -344,9 +370,23 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
             if matrix[(len(matrix)-1)-nodeToReach[0]][nodeToReach[1]] is not None:
                 # First, we check the distance between the node and the nodes to connect to,
                 # to see if it's not at a skidding distance of it.
-                minimalDistanceToNodesToConnect = MinCostPathHelper.minimum_distance_to_a_node(nodeToReach,
-                                                                                               set_of_nodes_to_connect_to,
-                                                                                               cost_raster)
+
+                # To quickly calculate the distance from the existing roads to each node in our polygons, we will use
+                # the k-d tree function from SciPy.
+                # For that, we need to make an Numpy array containing our road nodes
+                pointsToReach = list()
+                for node in set_of_nodes_to_connect_to:
+                    nodeToPoint = MinCostPathHelper._row_col_to_point(node, cost_raster)
+                    pointsToReach.append(nodeToPoint)
+                numpyArrayOfRoadPoints = np.array(pointsToReach)
+                spatialKDTREEForDistanceSearch = KDTree(numpyArrayOfRoadPoints, leafsize=20)
+                nodeAsPoint = MinCostPathHelper._row_col_to_point(nodeToReach, cost_raster)
+                minimalDistanceToNodesToConnect = spatialKDTREEForDistanceSearch.query(nodeAsPoint)[0]
+
+                # Obsolete with the k-d tree.
+                # minimalDistanceToNodesToConnect = MinCostPathHelper.minimum_distance_to_a_node(nodeToReach,
+                                                                                               # set_of_nodes_to_connect_to,
+                                                                                               # cost_raster)
                 # If it's superior, we create a road to this node
                 if minimalDistanceToNodesToConnect > skidding_distance:
                     start_row_col = nodeToReach
@@ -663,7 +703,7 @@ class MinCostPathHelper:
     def features_to_row_cols(given_features, raster_layer):
 
         row_cols = set()
-        extent = raster_layer.dataProvider().extent()
+        # extent = raster_layer.dataProvider().extent()
         # if extent.isNull() or extent.isEmpty:
         #     return list(col_rows)
 
