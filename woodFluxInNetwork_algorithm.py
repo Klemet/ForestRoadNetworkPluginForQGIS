@@ -35,6 +35,9 @@ __copyright__ = '(C) 2019 by Clement Hardy'
 import random
 import queue
 import math
+import processing
+from .kdtree import KDTree
+import numpy as np
 from PyQt5.QtCore import QCoreApplication, QVariant
 from PyQt5.QtGui import QIcon
 from qgis.core import (
@@ -80,6 +83,8 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
 
     INPUT_ENDING_POINTS = 'INPUT_ENDING_POINTS'
 
+    RETURN_EMPTY_ROADS = 'RETURN_EMPTY_ROADS'
+
     OUTPUT = 'OUTPUT'
 
     def initAlgorithm(self, config):
@@ -124,6 +129,14 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
         )
 
         self.addParameter(
+            QgsProcessingParameterEnum(
+                self.RETURN_EMPTY_ROADS,
+                self.tr('Should we save a road if its flux is 0 ?'),
+                ['Yes', 'No']
+            )
+        )
+
+        self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
                 self.tr('Output of the algorithm')
@@ -158,6 +171,15 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
             self.INPUT_ENDING_POINTS,
             context
         )
+
+        if self.parameterAsString(
+            parameters,
+            self.RETURN_EMPTY_ROADS,
+            context
+        ) == "Yes":
+            return_empty_roads = True
+        else:
+            return_empty_roads =  False
 
         # If source was not found, throw an exception to indicate that the algorithm
         # encountered a fatal error. The exception text can be any string, but in this
@@ -202,9 +224,18 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
         if sink is None:
             raise QgsProcessingException(self.invalidSinkError(parameters, self.OUTPUT))
 
+        # This algorithm needs the line network to be cut at each intersection. The user might have done it already;
+        # but just in case, we'll do it again thanks to one the QGIS processing algorithm.
+        feedback.pushInfo(self.tr("Splitting lines..."))
+        splittedLinesResult = processing.run("native:splitwithlines",
+                                      {'INPUT': road_network,
+                                       'LINES': road_network,
+                                       'OUTPUT': 'memory:'})
+        splittedLines = splittedLinesResult['OUTPUT']
+
         feedback.pushInfo(self.tr("Scanning lines..."))
         # For each line feature in the road network, we initialize an object of class "line"
-        multi_line = set(road_network.getFeatures())
+        multi_line = set(splittedLines.getFeatures())
         setOfRoadsAsLines = set()
         ID = 0
         # We are careful to treat each individual line of the given layer;
@@ -310,17 +341,20 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
         # Once that all of this is done, we prepare the output.
         # For every path we create, we save it as a line and put it into the sink !
         for line in setOfLinesToReturn:
-            # With the total cost which is the last item in our accumulated cost list,
-            # we create the PolyLine that will be returned as a vector.
-            path_feature = WoodFluxHelper.create_path_feature_from_points(line.lineFeature,
-                                                                          line.uniqueID,
-                                                                          line.flux,
-                                                                          line.getNeighborsUpstreamID(),
-                                                                          line.getNeighborsDownstreamID(),
-                                                                          sink_fields, )
-            # Into the sink that serves as our output, we put the PolyLines from the list of lines we created
-            # one by one
-            sink.addFeature(path_feature, QgsFeatureSink.FastInsert)
+            # We only return the line if it's flux is superior to 0, depending on the
+            # instruction given by the user
+            if return_empty_roads or (not return_empty_roads and line.flux > 0):
+                # With the total cost which is the last item in our accumulated cost list,
+                # we create the PolyLine that will be returned as a vector.
+                path_feature = WoodFluxHelper.create_path_feature_from_points(line.lineFeature,
+                                                                              line.uniqueID,
+                                                                              line.flux,
+                                                                              line.getNeighborsUpstreamID(),
+                                                                              line.getNeighborsDownstreamID(),
+                                                                              sink_fields, )
+                # Into the sink that serves as our output, we put the PolyLines from the list of lines we created
+                # one by one
+                sink.addFeature(path_feature, QgsFeatureSink.FastInsert)
 
         # When all is done, we return our output that is linked to the sink.
         feedback.pushInfo("Lines detected in input = " + str(len(setOfRoadsAsLines))
@@ -383,13 +417,15 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
           
           Please ensure all the input layers have the same CRS.
         
-          - Road Network : a forest road network where every line is split at intersections. They can be split even more, but they HAVE to be split at intersections. You can use the "Split with lines" tools for that in QGIS.
+          - Road Network : a forest road network like the one created by the "Forest Road Network Creation" algorithm.
           
           - Polygons where the wood was cut : Polygons that correspond to the zones where timber will or have been harvested.
           
           - Area in which one unit of timber will be produced in the polygon : This number will indicate the resolution at which one arbitrary unit of timber/wood will be produced in your harvest polygons. For example, if you input "100", the algorithm will place points with coordinates with a step of 100 (100,100;200,100;100,200; etc.) in your polygon. The algorithm then determines which road is the closest to each point, and the corresponding roads get added one arbitrary unit of wood flux for those points. This number depends on the  size of your polygons. The lower the number, the more precise this spatial computation will be; but it will take more time to compute.
          
-          - Ending points : points that correspond EXACTLY to the ending of the network, meaning its connection to the main road network. WARNING : If those points do not correspond exactly with the end of a line or the end of your network, the algorithm will have problems to complete. To generate them, you extract the nodes of your lines with the "Extract nodes" tool in QGIS; then, you can create a small buffer around the areas where the timber must go to, and use this buffer to select the nodes inside of it. These nodes will be your ending points.
+          - Ending points : points that correspond EXACTLY to the ending of the network, meaning its connection to the main road network. WARNING : If those points do not correspond exactly with the end of a line or the end of your network, the algorithm will have problems to complete. To generate them, you extract the nodes of your lines with the "Extract vertices" tool in QGIS; then, you can create a small buffer around the areas where the timber must go to, and use this buffer to select the nodes inside of it. These nodes will be your ending points.
+            
+          - Return empty roads : If a road is calculated to have a wood flux of 0, should it be saved in the output or be put aside ?        
         """)
 
     def shortDescription(self):
@@ -774,20 +810,24 @@ class WoodFluxHelper:
         progress = 0
         feedback.setProgress(0)
 
-        # For each point generated
+        # First, we will create a dictionary that will allow us to retrieve the line to which a point
+        # is associated, and the list of points for the k-d tree analysis.
+        pointToLineDictionnary = dict()
+        setOfPointsFromTheLines = set()
+        for line in setOfRoadsAsLines:
+            for pointOfLine in line.lineFeature:
+                pointToLineDictionnary[pointOfLine] = line
+                setOfPointsFromTheLines.add(pointOfLine)
+
+        # Next, we create the k-d search tree with all of the points.
+        numpyArrayOfRoadPoints = np.array(list(setOfPointsFromTheLines))
+        spatialKDTREEForDistanceSearch = KDTree(numpyArrayOfRoadPoints, leafsize=20)
+
+        # Then, for each point generated
         for point in pointsOfWoodGeneration:
-            # First, we get the closest line for this point
-            distanceBetweenPointAndLines = dict()
-            for line in setOfRoadsAsLines:
-                minimalDistanceForLine = float("inf")
-                # for a given line, we look at the points composing it; for each, we look at the distance
-                # with the given point
-                for pointOfLine in line.lineFeature:
-                    if minimalDistanceForLine > point.distance(pointOfLine):
-                        minimalDistanceForLine = point.distance(pointOfLine)
-                # We indicate the distance between this line and the point
-                distanceBetweenPointAndLines[line] = minimalDistanceForLine
-            closestLine = min(distanceBetweenPointAndLines, key=distanceBetweenPointAndLines.get)
+            # We find the closest point, and put it into the dictionary to extract the closest line
+            closestPointIndex = spatialKDTREEForDistanceSearch.query(point)[1]
+            closestLine = pointToLineDictionnary[list(setOfPointsFromTheLines)[closestPointIndex]]
             # Then, we add a wood flux of "1" from this point to this line
             closestLine.flux += 1
             progress += 1
