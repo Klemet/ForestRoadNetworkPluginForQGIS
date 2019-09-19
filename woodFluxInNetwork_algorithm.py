@@ -588,11 +588,17 @@ class LineForAlgorithm:
         # for the dijkstra search
         results = dict()
         predecessors = dict()
+        costSoFar = dict()
+        costSoFar[self] = self.lineLength
+        # We initialize a set that will allow us to avoid looping in the search.
+        linesAlreadyConsidered = set()
+        linesAlreadyConsidered.add(self)
 
         frontier = queue.PriorityQueue()
         # We start by putting the direct neighbors of the line in the queue
         for line in linesConnectedToEnding:
             predecessors[line] = self
+            costSoFar[line] = line.lineLength + costSoFar[self]
             # If one of the direct neighbors is a root, we can stop right there.
             if line.isARootOfTheNetwork:
                 results["found"] = True
@@ -600,9 +606,6 @@ class LineForAlgorithm:
                 return results
             else:
                 frontier.put((line.uniqueID, line))
-        # We initialize a set that will allow us to avoid looping in the search.
-        linesAlreadyConsidered = set()
-        linesAlreadyConsidered.add(self)
 
         while not frontier.empty():
             curentLine = frontier.get()
@@ -616,29 +619,28 @@ class LineForAlgorithm:
                 if neighbour.isARootOfTheNetwork:
                     results["found"] = True
                     predecessors[neighbour] = curentLine
-                    results["distance"] = neighbour._distanceToStart(self, predecessors, feedback)
+                    results["distance"] = neighbour.lineLength + costSoFar[curentLine]
                     return results
                 # If not, we keep the search going on and add the neighbour to be looked at.
                 else:
                     # But first, we gotta check if it's the best choice to put the current line as predecessor
                     # of the neighbor if he already has one.
                     if (neighbour in predecessors):
-                        predecessorWeMightKeep = predecessors[neighbour]
-                        distanceToStarFromPredecessorWeMightKeep = neighbour._distanceToStart(self, predecessors, feedback)
-                        predecessors[neighbour] = curentLine
-                        # If it's longer to go through the currentLine, we keep the previous predecessor
-                        if neighbour._distanceToStart(self, predecessors, feedback) > distanceToStarFromPredecessorWeMightKeep:
-                            predecessors[neighbour] = predecessorWeMightKeep
+                        if costSoFar[neighbour] > neighbour.lineLength + costSoFar[curentLine]:
+                            predecessors[neighbour] = curentLine
+                            costSoFar[neighbour] = neighbour.lineLength + costSoFar[curentLine]
+
                     else:
                         predecessors[neighbour] = curentLine
-                        frontier.put((neighbour._distanceToStart(self, predecessors, feedback), neighbour))
+                        costSoFar[neighbour] = neighbour.lineLength + costSoFar[curentLine]
+                        frontier.put((costSoFar[neighbour], neighbour))
 
         # If we didn't found the root during the search, we return empty results.
         results["found"] = False
         return results
 
     def _distanceToStart(self, startingLine, predecessors, feedback):
-        """This function is here to help with the previous function to find the distance to the starting line of
+        """Obsolete. This function is here to help with the previous function to find the distance to the starting line of
         the search via the predecessors of this line."""
 
         distance = self.lineLength
