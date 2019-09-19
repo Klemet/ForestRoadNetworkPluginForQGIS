@@ -270,9 +270,34 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
         # Then, we update our line objects to reflect network structure. See function in Line class.
         feedback.pushInfo(self.tr("Scanning network structure..."))
 
+        # First, we got to initialize some k-d tree for some quick nearest-point searches, and the dictionnary
+        # relating ending points of lines to lines.
+        endingPointsOfLines = set()
+        linesEndingDictionary = dict()
+        for line in setOfRoadsAsLines:
+            endingPointsOfLines.add(line.ending1)
+            if line.ending1 not in linesEndingDictionary:
+                linesEndingDictionary[line.ending1] = list()
+                linesEndingDictionary[line.ending1].append(line)
+            else:
+                linesEndingDictionary[line.ending1].append(line)
+            endingPointsOfLines.add(line.ending2)
+            if line.ending2 not in linesEndingDictionary:
+                linesEndingDictionary[line.ending2] = list()
+                linesEndingDictionary[line.ending2].append(line)
+            else:
+                linesEndingDictionary[line.ending2].append(line)
+
+        endingPointsOfLines = list(endingPointsOfLines)
+        numpyArrayOfLinesEndingPoints = np.array(endingPointsOfLines)
+        kdTreeForLinesEnding = KDTree(numpyArrayOfLinesEndingPoints, leafsize=20)
+        numpyArrayOfEndingPoints = np.array(list(setOfEndingPoints))
+        kdTreeForEndingPoints = KDTree(numpyArrayOfEndingPoints, leafsize=20)
+
         feedbackProgress = 0
         for line in setOfRoadsAsLines:
-            line.initializeRelationToNetwork(setOfRoadsAsLines, setOfEndingPoints)
+            line.initializeRelationToNetwork(endingPointsOfLines, kdTreeForLinesEnding,
+                                             linesEndingDictionary, kdTreeForEndingPoints)
             if feedback.isCanceled():
                 raise QgsProcessingException(self.tr("ERROR: Operation was cancelled."))
             feedbackProgress += 1
@@ -474,37 +499,49 @@ class LineForAlgorithm:
         dijkstra search below."""
         return self.uniqueID < other.uniqueID
 
-    def initializeRelationToNetwork(self, listOfLinesForAlgorithm, endingPoints):
-        """Initialize the lines that are connected to this line, and we also check if the line is a "leaf" or not"""
+    def initializeRelationToNetwork(self, listOfLineEndings, kdTreeForLinesEnding, linesEndingDictionary, kdTreeForEndingPoints):
+        """Initialize the lines that are connected to this line, and we also check if the line is a "leaf" or not.
+        Carefull : the linesEndingDictionary must contain a list for each entry. This list can contain several
+        lines, as two lines can share the same exact ending point."""
 
-        # For all the other lines in the network, we check which one touches the endings of this one.
-        for otherLine in listOfLinesForAlgorithm:
-            if otherLine.uniqueID != self.uniqueID:
-                if self.ending1.compare(otherLine.ending1, 1) or self.ending1.compare(otherLine.ending2,1):
-                    self.linesConnectedToEnding1.add(otherLine)
-                elif self.ending2.compare(otherLine.ending1, 1) or self.ending2.compare(otherLine.ending2,1):
-                    self.linesConnectedToEnding2.add(otherLine)
+        # We get all of the points at a distance of 1 CRS units around the ending 1 of the line.
+        indexOfEndingsOfLinesNearby = kdTreeForLinesEnding.query_ball_point(self.ending1, 1)
+        if len(indexOfEndingsOfLinesNearby) > 0:
+            for indexOfEndingPointOfLine in indexOfEndingsOfLinesNearby:
+                otherLines = linesEndingDictionary[listOfLineEndings[indexOfEndingPointOfLine]]
+                for otherLine in otherLines:
+                    if otherLine.uniqueID != self.uniqueID:
+                        self.linesConnectedToEnding1.add(otherLine)
+
+        # We do the same for the second ending.
+        indexOfEndingsOfLinesNearby = kdTreeForLinesEnding.query_ball_point(self.ending2, 1)
+        if len(indexOfEndingsOfLinesNearby) > 0:
+            for indexOfEndingPointOfLine in indexOfEndingsOfLinesNearby:
+                otherLines = linesEndingDictionary[listOfLineEndings[indexOfEndingPointOfLine]]
+                for otherLine in otherLines:
+                    if otherLine.uniqueID != self.uniqueID:
+                        self.linesConnectedToEnding2.add(otherLine)
 
         # To check if the line is a leaf (an outward ending of the network) or a root, we check if it has an ending
         # without neighbors, and if this ending coincide with an end point. If it does not for any ending point,
         # then the line is a leaf of the network.
+
+        # For that, we use another k-d tree to search for the ending points that could be nearby.
         if len(self.linesConnectedToEnding1) == 0:
-            for endingPoint in endingPoints:
-                if self.ending1.compare(endingPoint, 1):
-                    self.isARootOfTheNetwork = True
-                    break
-            if not self.isARootOfTheNetwork:
+            endingPointsNearby = kdTreeForEndingPoints.query_ball_point(self.ending1, 1)
+            if len(endingPointsNearby) > 0:
+                self.isARootOfTheNetwork = True
+                return
+            else:
                 self.isALeafOfTheNetwork = True
-                # self.flux = 1
 
         elif len(self.linesConnectedToEnding2) == 0:
-            for endingPoint in endingPoints:
-                if self.ending2.compare(endingPoint, 1):
-                    self.isARootOfTheNetwork = True
-                    break
-            if not self.isARootOfTheNetwork:
+            endingPointsNearby = kdTreeForEndingPoints.query_ball_point(self.ending2, 1)
+            if len(endingPointsNearby) > 0:
+                self.isARootOfTheNetwork = True
+                return
+            else:
                 self.isALeafOfTheNetwork = True
-                # self.flux = 1
 
     def initializeDownstreamDirection(self, endingPoints, feedback):
         """This function will find and register which ending is downstream, and which is upstream.
@@ -561,8 +598,8 @@ class LineForAlgorithm:
                     "ERROR: For a certain line, Upstream and Downstream could not be determined." +
                     "No root of the network have been found." +
                     "Problematic line is between those two points : " + str(self.ending1)
-                    + " and " + str(self.ending2) + ". Please check if your network have been cut into"
-                                                    "pieces via the \"split lines with lines\" tool of QGIS.")
+                    + " and " + str(self.ending2) + ". Please check if an ending point exist for every branch"
+                                                    "of your network..")
 
             # If the function ended without use being able to determine at least a upstream or a downstream,
             # this could be a problem. We raise an exception with details about the line.
@@ -570,14 +607,14 @@ class LineForAlgorithm:
                 raise QgsProcessingException(
                     "ERROR: For a certain line, Upstream and Downstream could not be determined."
                     "Problematic line is between those two points : " + str(self.ending1)
-                    + " and " + str(self.ending2) + ". Please check if your network have been cut into"
-                                                    "pieces via the \"split lines with lines\" tool of QGIS.")
+                    + " and " + str(self.ending2) + ". Please check if an ending point exist for every branch"
+                                                    "of your network..")
             if len(self.linesConnectedDownstream) == 0 and not self.isARootOfTheNetwork:
                 raise QgsProcessingException(
                     "ERROR: For a certain line that is not a root, Downstream could not be determined."
                     "Problematic line is between those two points : " + str(self.ending1)
-                    + " and " + str(self.ending2) + ". Please check if your network have been cut into"
-                                                    "pieces via the \"split lines with lines\" tool of QGIS.")
+                    + " and " + str(self.ending2) + ". Please check if an ending point exist for every branch"
+                                                    "of your network..")
 
 
     def _FindLeastCostPathFromEnding(self, linesConnectedToEnding, feedback):
@@ -797,9 +834,8 @@ class WoodFluxHelper:
                         setOfPointsToReturn.add(point)
                     # else:
                         # feedback.pushInfo("We did not add a point !")
-                    progress += 1
                     # feedback.setProgress(100 * progress / (len(listOfXCoordinates) * len(listOfYCoordinates)))
-
+            progress += 1
             feedback.setProgress(100 * progress / (len(setOfPolygons)))
 
         return setOfPointsToReturn
