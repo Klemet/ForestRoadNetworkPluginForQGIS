@@ -29,6 +29,7 @@
 
 
 from math import sqrt
+import math
 import queue
 import random
 from qgis.core import (
@@ -51,7 +52,7 @@ from qgis.core import (
 )
 
 
-def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
+def dijkstra(start_row_col, end_row_cols, block, angle_considered, punisherAngleDictionnary,feedback=None):
     sqrt2 = sqrt(2)
 
     # The grid class is used to both contain the matrix of the values
@@ -103,8 +104,13 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
         def min_manhattan(self, curr_node, end_nodes):
             return min(map(lambda node: self.manhattan_distance(curr_node, node), end_nodes))
 
+        def getAngle(self, a, b, c):
+            """Function to get the angle between three coordinates."""
+            ang = math.degrees(math.atan2(c[1]-b[1], c[0]-b[0]) - math.atan2(a[1]-b[1], a[0]-b[0]))
+            return ang + 360 if ang < 0 else ang
+
         # Function to get the cost associated for passing from a node to another (current, next)
-        def simple_cost(self, cur, nex):
+        def simple_cost(self, cur, nex, predecessorDictionnary, angle_considered, punisherAngleDictionnary):
             # Coordinates of current
             crow, ccol = cur
             # Coordinates of next
@@ -116,9 +122,24 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
             # Check if the nodes are horizontal/vertical neighbours, or diagonals.
             # Adjust the cost to go from one to the other accordingly.
             if ccol == ncol or crow == nrow:
-                return (currV + offsetV) / 2
+                cost =  (currV + offsetV) / 2
             else:
-                return sqrt2 * (currV + offsetV) / 2
+                cost =  sqrt2 * (currV + offsetV) / 2
+            # Then, we adjust the cost according to the angle formed between the predecessor of current and next.
+            if angle_considered and predecessorDictionnary[cur] is not None:
+                pred = predecessorDictionnary[cur]
+                angle = self.getAngle(pred, cur, nex)
+                # Case of 45 degrees
+                if angle == 180 - 45 or angle == 180 + 45:
+                    cost = cost * punisherAngleDictionnary[45]
+                elif angle == 180 - 90 or angle == 180 + 90:
+                    cost = cost * punisherAngleDictionnary[90]
+                elif angle == 180 - 135 or angle == 180 + 135:
+                    cost = cost * punisherAngleDictionnary[135]
+                # Case of a flat angle (0 degrees) : we do nothing.
+                # Case of a full turn (180 degrees) : impossible with the dijkstra algorithm.
+
+            return cost
 
     # We create the grid object containing the values of the cost raster
     grid = Grid(block)
@@ -175,7 +196,8 @@ def dijkstra(start_row_col, end_row_cols, block, raster_layer, feedback=None):
         for nex in grid.neighbors(current_node):
             # We calculate the distance to goal from this neighbour (which is the one
             # from the current node + the move from current node to neighbour)
-            new_cost = cost_so_far[current_node] + grid.simple_cost(current_node, nex)
+            new_cost = cost_so_far[current_node] + grid.simple_cost(current_node, nex, came_from, angle_considered,
+                                                                    punisherAngleDictionnary)
             # If the neighbour is not in the dictionary of opened nodes, or if
             # the cost of passing by this neighbour is cheaper than the previous
             # predecessor that this node had

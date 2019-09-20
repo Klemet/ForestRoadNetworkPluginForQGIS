@@ -90,6 +90,10 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
     # BOOLEAN_OUTPUT_LINEAR_REFERENCE = 'BOOLEAN_OUTPUT_LINEAR_REFERENCE'
     SKIDDING_DISTANCE = 'SKIDDING_DISTANCE'
     METHOD_OF_GENERATION = 'METHOD_OF_GENERATION'
+    ANGLES_CONSIDERED = 'ANGLES_CONSIDERED'
+    PUNISHER_45DEGREES = 'PUNISHER_45DEGREES'
+    PUNISHER_90DEGREES = 'PUNISHER_90DEGREES'
+    PUNISHER_135DEGREES = 'PUNISHER_135DEGREES'
     OUTPUT = 'OUTPUT'
 
     def initAlgorithm(self, config):
@@ -144,7 +148,50 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterEnum(
                 self.METHOD_OF_GENERATION,
                 self.tr('Method of generation of the road network'),
-                ['Random', 'Closest first', 'Farthest first']
+                ['Random', 'Closest first', 'Farthest first'],
+                defaultValue=1
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                self.ANGLES_CONSIDERED,
+                self.tr('Should the angles of the roads be considered in the cost ?'),
+                ['Yes', 'No'],
+                defaultValue=1
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                self.PUNISHER_45DEGREES,
+                self.tr('Punishing multiplier for a 45 degrees turning angle'),
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=1.25,
+                optional=True,
+                minValue=1
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                self.PUNISHER_90DEGREES,
+                self.tr('Punishing multiplier for a 90 degrees turning angle'),
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=2,
+                optional=True,
+                minValue=1
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                self.PUNISHER_135DEGREES,
+                self.tr('Punishing multiplier for a 135 degrees turning angle'),
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=5,
+                optional=True,
+                minValue=1
             )
         )
 
@@ -192,6 +239,35 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         method_of_generation = self.parameterAsString(
             parameters,
             self.METHOD_OF_GENERATION,
+            context
+        )
+
+        if self.parameterAsString(
+            parameters,
+            self.ANGLES_CONSIDERED,
+            context
+        ) == '0' :
+            angles_considered = True
+        else:
+            angles_considered = False
+
+        punisherAngleDictionnary = dict()
+
+        punisherAngleDictionnary[45] = self.parameterAsDouble(
+            parameters,
+            self.PUNISHER_45DEGREES,
+            context
+        )
+
+        punisherAngleDictionnary[90] = self.parameterAsDouble(
+            parameters,
+            self.PUNISHER_90DEGREES,
+            context
+        )
+
+        punisherAngleDictionnary[135] = self.parameterAsDouble(
+            parameters,
+            self.PUNISHER_135DEGREES,
             context
         )
 
@@ -360,8 +436,25 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
 
         # Now, time to launch the algorithm properly !
         feedback.pushInfo(self.tr("Generating the road network...(This can take some time !)"))
+
+        # First, we have to initialize some things.
         feedbackProgress = 0
         listOfResults = list()
+        pointsToReach = set()
+        for node in set_of_nodes_to_connect_to:
+            nodeToPoint = MinCostPathHelper._row_col_to_point(node, cost_raster)
+            pointsToReach.add(nodeToPoint)
+
+        # This is the road matrix. It's use to quickly know if there are roads at two given coordinates.
+        roadMatrix = np.zeros( (cost_raster.height(), cost_raster.width()) )
+        # A "1" means that there is a road at the given coordinate.
+        for node in set_of_nodes_to_connect_to:
+            roadMatrix[node[0]][node[1]] = 1
+
+        # Now, we have to initialize the circle neighborhood.
+        skiddingDistanceCircleNeighborhood = MinCostPathHelper.createRelativeCircleNeighborhood(skidding_distance,
+                                                                                                cost_raster)
+        feedback.pushInfo(self.tr("Size of the skidding neighborhood : " + str(len(skiddingDistanceCircleNeighborhood))))
 
         for nodeToReach in list_of_nodes_to_reach:
             feedbackProgress += 1
@@ -371,28 +464,32 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
                 # First, we check the distance between the node and the nodes to connect to,
                 # to see if it's not at a skidding distance of it.
 
-                # To quickly calculate the distance from the existing roads to each node in our polygons, we will use
-                # the k-d tree function from SciPy.
-                # For that, we need to make an Numpy array containing our road nodes
-                pointsToReach = list()
-                for node in set_of_nodes_to_connect_to:
-                    nodeToPoint = MinCostPathHelper._row_col_to_point(node, cost_raster)
-                    pointsToReach.append(nodeToPoint)
-                numpyArrayOfRoadPoints = np.array(pointsToReach)
-                spatialKDTREEForDistanceSearch = KDTree(numpyArrayOfRoadPoints, leafsize=20)
-                nodeAsPoint = MinCostPathHelper._row_col_to_point(nodeToReach, cost_raster)
-                minimalDistanceToNodesToConnect = spatialKDTREEForDistanceSearch.query(nodeAsPoint)[0]
-
                 # Obsolete with the k-d tree.
                 # minimalDistanceToNodesToConnect = MinCostPathHelper.minimum_distance_to_a_node(nodeToReach,
                                                                                                # set_of_nodes_to_connect_to,
                                                                                                # cost_raster)
+
+                # To quickly calculate the distance from the existing roads to each node in our polygons, we will use
+                # the k-d tree function from SciPy.
+                # Now obsolete with the circle neighborhood method.
+                # For that, we need to make an Numpy array containing our road nodes
+                # spatialKDTREEForDistanceSearch = KDTree(np.array(list(pointsToReach)), leafsize=20)
+                # nodeAsPoint = MinCostPathHelper._row_col_to_point(nodeToReach, cost_raster)
+                # minimalDistanceToNodesToConnect = spatialKDTREEForDistanceSearch.query(nodeAsPoint)[0]
+
                 # If it's superior, we create a road to this node
-                if minimalDistanceToNodesToConnect > skidding_distance:
+                # if minimalDistanceToNodesToConnect > skidding_distance:
+
+                # New method : using a relative neighborhood.
+                foundRoadInSkiddingDistance = MinCostPathHelper.checkRelativeCircleNeighborhoodForRoads(skiddingDistanceCircleNeighborhood,
+                                                                                                        nodeToReach,
+                                                                                                        roadMatrix)
+
+                if not foundRoadInSkiddingDistance :
                     start_row_col = nodeToReach
                     end_row_cols = list(set_of_nodes_to_connect_to)
-                    min_cost_path, costs, selected_end = dijkstra(start_row_col, end_row_cols, matrix, cost_raster,
-                                                                  feedback)
+                    min_cost_path, costs, selected_end = dijkstra(start_row_col, end_row_cols, matrix,
+                                                                  angles_considered, punisherAngleDictionnary, feedback)
                     # If there was a problem, we indicate if it's because the search was cancelled by the user
                     # or if there was no end point that could be reached.
                     if min_cost_path is None:
@@ -414,6 +511,10 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
                         listOfResults.append((min_cost_path, costs[-1]))
                         # We also add the nodes of the created path to the set of nodes that can be reached now
                         set_of_nodes_to_connect_to.update(min_cost_path)
+                        for node in min_cost_path:
+                            nodeToPoint = MinCostPathHelper._row_col_to_point(node, cost_raster)
+                            pointsToReach.add(nodeToPoint)
+                            roadMatrix[node[0]][node[1]] = 1
 
             feedback.setProgress(100 * (feedbackProgress / len(list_of_nodes_to_reach)))
 
@@ -538,7 +639,7 @@ class MinCostPathHelper:
 
         x = (row_col[1] + 0.5) * xres + extent.xMinimum()
         # There is a dissonance about how I see y axis of the raster
-        # and how the program sees it.
+        # and how the dijstra algorithm sees it. This is where the transformation is made.
         y = (row_col[0] + 0.5) * yres + extent.yMinimum()
         return QgsPointXY(x, y)
 
@@ -781,3 +882,50 @@ class MinCostPathHelper:
                 minimumDistance = distance
 
         return minimumDistance
+
+    @staticmethod
+    def createRelativeCircleNeighborhood(skiddingDistance, raster_layer):
+        """"This method initialize a relative circle neighborhood based on the size of the pixels and on the
+        skidding distance inputted by the user, in order to check rapidly if an existing road is at skidding distance
+        from a given node."""
+
+        xres = raster_layer.rasterUnitsPerPixelX()
+        yres = raster_layer.rasterUnitsPerPixelY()
+
+        widthOfNeighborhood = floor(skiddingDistance / xres) + 1
+        heightOfNeighborhood = floor(skiddingDistance / yres) + 1
+
+        relativeCircleNeighborhood = set()
+
+        for col in range(-widthOfNeighborhood, widthOfNeighborhood+1):
+            for row in range(-heightOfNeighborhood, heightOfNeighborhood+1):
+                # If the euclidian distance between a relative coordinate and the "origin" cell is superior to the
+                # skidding distance, this cell won't be part of the neighborhood.
+                if sqrt((row*yres)**2 + (col*xres)**2) <= skiddingDistance:
+                    relativeCircleNeighborhood.add((row, col))
+
+        return relativeCircleNeighborhood
+
+    @staticmethod
+    def checkRelativeCircleNeighborhoodForRoads(relativeCircleNeighborhood, nodeAsRowCol, roadMatrix):
+        """"This function uses the relative circle neighborhood to check if a road is at skidding distance from a
+        node."""
+
+        rowOfNode = nodeAsRowCol[0]
+        colOfNode = nodeAsRowCol[1]
+        foundARoad = False
+
+        for relativeNeighbour in relativeCircleNeighborhood:
+            relativeRow = rowOfNode + relativeNeighbour[0]
+            relativeColumn = colOfNode + relativeNeighbour[1]
+            # We check if the relative row index is correct; same for the column.
+            if relativeRow > 0 and relativeRow < len(roadMatrix):
+                if relativeColumn > 0 and relativeColumn < len(roadMatrix[0]):
+                    if roadMatrix[relativeRow][relativeColumn] == 1:
+                        foundARoad = True
+                        break
+
+        return foundARoad
+
+
+
