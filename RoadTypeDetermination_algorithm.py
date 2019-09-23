@@ -117,7 +117,7 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFeatureSource(
                 self.TEMPORARY_ROADS_PRIORITY_POLYGONS,
-                self.tr('Polygons that will indicates the zones where temporary road must be built in priority (optional)'),
+                self.tr('Polygons that will indicates the zones where temporary roads can be built'),
                 [QgsProcessing.TypeVectorPolygon],
                 optional=True
             )
@@ -126,7 +126,7 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterField(
                 self.TEMPORARY_ROADS_PRIORITY_FIELD,
-                self.tr('Attribute field of the priority polygons layer that contains the priority number associated to the polygons'),
+                self.tr('Attribute field of the previous polygon layer defining in which polygon should the temporary roads be build first'),
                 parentLayerParameterName=self.TEMPORARY_ROADS_PRIORITY_POLYGONS,
                 type=QgsProcessingParameterField.Numeric,
                 optional=True
@@ -308,7 +308,7 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
         # If the user gave priority polygons, we also check them to see if one of them is missing a priority
         progress = 0
         feedback.setProgress(0)
-        if temporary_roads_priority_polygons is not None:
+        if temporary_roads_priority_polygons is not None and priority_field_index is not None:
             polygoneFeatures = list(temporary_roads_priority_polygons.getFeatures())
 
             for polygon in polygoneFeatures:
@@ -357,7 +357,9 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
             tertiaryLines.sort(key=lambda x: x.geometry().length())
 
         # If we have priority polygons, we will get the priority value of each tertiary road and use it to sort our list
-        elif temporary_roads_priority_polygons is not None and temporaryRoadPercentage > 0:
+        elif temporary_roads_priority_polygons is not None \
+                and priority_field_index is not None \
+                and temporaryRoadPercentage > 0:
             polygoneFeatures = list(temporary_roads_priority_polygons.getFeatures())
             tertiaryLines = RoadTypeDeterminationHelper.SortWithPriorityPolygons(tertiaryLines,
                                                                                 polygoneFeatures,
@@ -367,16 +369,23 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
             # We loop and convert the lines until we reach the given percentage of length of tertiary roads that have
             # been converted
             percentageOfLengthConverted = 0
-            index = 0;
+            index = 0
             totalLengthOfTertiaryRoads = 0
             for road in tertiaryLines:
                 totalLengthOfTertiaryRoads += road.geometry().length()
 
             while percentageOfLengthConverted < temporaryRoadPercentage and index < len(tertiaryLines):
                 currentRoad = tertiaryLines[index]
-                typeOfRoad[currentRoad] = "Temporary"
+                # If we have polygons indicating where the temporary can be build, we look if the road is inside one of them.
+                if temporary_roads_priority_polygons is not None:
+                    if RoadTypeDeterminationHelper.IsThisLineInAPolygon(currentRoad, temporary_roads_priority_polygons):
+                        typeOfRoad[currentRoad] = "Temporary"
+                        percentageOfLengthConverted += (currentRoad.geometry().length() / totalLengthOfTertiaryRoads) * 100
+                else:
+                    typeOfRoad[currentRoad] = "Temporary"
+                    percentageOfLengthConverted += (currentRoad.geometry().length() / totalLengthOfTertiaryRoads) * 100
+
                 index += 1
-                percentageOfLengthConverted += (currentRoad.geometry().length() / totalLengthOfTertiaryRoads) * 100
                 progress += 1
                 feedback.setProgress(100 * (percentageOfLengthConverted / temporaryRoadPercentage))
 
@@ -470,9 +479,9 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
           
           - Flux field : The attribute field of the road network layer containing the information about the wood flux going through the lines.
 
-          - Polygons that will indicates the zones where temporary road must be built in priority (optional) : straight-forward.
+          - Polygons that will indicates the zones where temporary roads can be built (optional) : straight-forward.
 
-          - Attribute field of the priority polygons layer that contains the priority number associated to the polygons : the higher the number, the higher the priority will be. If no priority polygons or fields are indicated, then the algorithm will prioritize small roads for becoming temporary.
+          - Attribute field of the previous polygon layer defining in which polygon should the temporary roads be build first (optional) : the higher the number, the higher the priority will be. If no priority polygons or fields are indicated, then the algorithm will prioritize small roads for becoming temporary.
 
           - Threshold of wood flux under which a forest road will be a tertiary road, and over it a secondary road : straight-forward.
           
@@ -541,6 +550,22 @@ class RoadTypeDeterminationHelper:
         sortedListOfLines = sorted(listOfLines, key=lambda x: priorityOfLines[x], reverse=True)
 
         return sortedListOfLines
+
+    @staticmethod
+    def IsThisLineInAPolygon(line, polygonLayer):
+        """Check if a line is entirely inside a polygon layer."""
+
+        polygongFeatures = polygonLayer.getFeatures()
+        lineGeometry = line.geometry()
+        isInPolygonLayer = False
+
+        for polygon in polygongFeatures:
+            if polygon.geometry().contains(lineGeometry):
+                isInPolygonLayer = True
+                break
+
+        return isInPolygonLayer
+
 
     # Function to create the fields for the attributes that we register with the lines.
     @staticmethod
