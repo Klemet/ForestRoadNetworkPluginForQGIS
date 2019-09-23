@@ -55,6 +55,7 @@ from qgis.core import (
     QgsProcessingParameterFeatureSource,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterRasterLayer,
+    QgsProcessingParameterField,
     QgsProcessingParameterBand,
     QgsProcessingParameterBoolean,
     QgsProcessingParameterNumber,
@@ -78,6 +79,12 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
     INPUT_ROAD_NETWORK = 'INPUT_ROAD_NETWORK'
 
     INPUT_POLYGONS_CUTTED = 'INPUT_POLYGONS_CUTTED'
+
+    POINTS_RESOLUTION = 'POINTS_RESOLUTION'
+
+    WOOD_ATTRIBUTE = 'WOOD_ATTRIBUTE'
+
+    DENSITY_OR_VOLUME = 'DENSITY_OR_VOLUME'
 
     WOOD_DENSITY = 'WOOD_DENSITY'
 
@@ -104,26 +111,56 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFeatureSource(
                 self.INPUT_POLYGONS_CUTTED,
-                self.tr('Polygons where wood was cut'),
+                self.tr('Polygons where the wood was cut'),
                 [QgsProcessing.TypeVectorPolygon]
             )
         )
 
         self.addParameter(
             QgsProcessingParameterNumber(
+                self.POINTS_RESOLUTION,
+                self.tr('The density of points (for 1 crs units) that will be treated as a source of wood.'),
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=1,
+                optional=False,
+                minValue=0.0000000001
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterField(
+                self.WOOD_ATTRIBUTE,
+                self.tr('Attribute field that indicates quantities of wood in each polygon (density or volume)'),
+                parentLayerParameterName=self.INPUT_POLYGONS_CUTTED,
+                type=QgsProcessingParameterField.Numeric,
+                optional=True
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                self.DENSITY_OR_VOLUME,
+                self.tr('Is the chosen attribute field a measure of density or volume of wood ?'),
+                ['Density', 'Volume'],
+                optional=True
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterNumber(
                 self.WOOD_DENSITY,
-                self.tr('Area in which one unit of timber will be produced in the polygons (in CRS units)'),
+                self.tr('If no attribute field is selected, indicate an arbitrary density of wood for all polygons'),
                 type=QgsProcessingParameterNumber.Double,
                 defaultValue=100,
                 optional=False,
-                minValue=0
+                minValue=0.0000000001
             )
         )
 
         self.addParameter(
             QgsProcessingParameterFeatureSource(
                 self.INPUT_ENDING_POINTS,
-                self.tr('The end points (connections to main road network) of the network'),
+                self.tr('The end points of the network (to where the wood must go)'),
                 [QgsProcessing.TypeVectorPoint]
             )
         )
@@ -132,7 +169,8 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterEnum(
                 self.RETURN_EMPTY_ROADS,
                 self.tr('Should we save a road if its flux is 0 ?'),
-                ['Yes', 'No']
+                ['Yes', 'No'],
+                defaultValue = 1
             )
         )
 
@@ -148,6 +186,7 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
         Here is where the processing itself takes place.
         """
 
+        # First, we register all of the parameters entered by the user into variables.
         road_network = self.parameterAsVectorLayer(
             parameters,
             self.INPUT_ROAD_NETWORK,
@@ -160,11 +199,46 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
             context
         )
 
-        wood_density = self.parameterAsInt(
+        points_resolution = self.parameterAsDouble(
             parameters,
-            self.WOOD_DENSITY,
+            self.POINTS_RESOLUTION,
             context
         )
+
+        # If the user entered an attribute field for information on the wood present in the polygons, we read it
+        # and we indicate that we will not use the arbitrary density; if not, we do the opposite.
+        if self.parameterAsString(
+                    parameters,
+                    self.WOOD_ATTRIBUTE,
+                    context
+                ) is not None:
+            wood_attribute_index = polygons_cutted.fields().lookupField(
+                self.parameterAsString(
+                    parameters,
+                    self.WOOD_ATTRIBUTE,
+                    context
+                )
+            )
+            density_or_volume = self.parameterAsString(
+                parameters,
+                self.DENSITY_OR_VOLUME,
+                context
+            )
+            # If the user indicated an attribute field, but did not indicate if it corresponds to a volume or a density
+            # of wood, we raise an exception.
+            if density_or_volume is None or density_or_volume == '':
+                raise QgsProcessingException(self.tr("Please, describe if the attribute field you have chosen for the"
+                                                     " polygons corresponds to density or volume of wood."))
+            wood_density = None
+
+        else:
+            wood_density = self.parameterAsDouble(
+                parameters,
+                self.WOOD_DENSITY,
+                context
+            )
+            wood_attribute_index = None
+            density_or_volume = None
 
         ending_points = self.parameterAsVectorLayer(
             parameters,
@@ -176,21 +250,17 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
             parameters,
             self.RETURN_EMPTY_ROADS,
             context
-        ) == "Yes":
+        ) == '0':
             return_empty_roads = True
         else:
             return_empty_roads =  False
 
         # If source was not found, throw an exception to indicate that the algorithm
-        # encountered a fatal error. The exception text can be any string, but in this
-        # case we use the pre-built invalidSourceError method to return a standard
-        # helper text for when a source cannot be evaluated
+        # encountered a fatal error.
         if road_network is None:
             raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT_ROAD_NETWORK))
         if polygons_cutted is None:
             raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT_POLYGONS_CUTTED))
-        if wood_density is None:
-            raise QgsProcessingException(self.invalidSourceError(parameters, self.WOOD_DENSITY))
         if ending_points is None:
             raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT_ENDING_POINTS))
 
@@ -224,8 +294,31 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
         if sink is None:
             raise QgsProcessingException(self.invalidSinkError(parameters, self.OUTPUT))
 
-        # This algorithm needs the line network to be cut at each intersection. The user might have done it already;
-        # but just in case, we'll do it again thanks to one the QGIS processing algorithm.
+        # Before all, thanks to the polygon extent and the wood density parameter, we will define the "points" inside the
+        # polygons from which the wood flux will come from. We do it first so that if it fails due to the input point
+        # resolution, the user can try another one quickly.
+        feedback.pushInfo(self.tr("Analyzing harvested areas..."))
+        feedback.pushInfo(
+            self.tr("If this step takes too long, it might be that the point resolutions you gave as input"
+                    " is too high, resulting in a very large number of points as source of wood generated."))
+
+        if density_or_volume == '1':
+            isItVolume = True
+            # feedback.pushInfo(self.tr("Volume detected."))
+        else:
+            isItVolume = False
+            # feedback.pushInfo(self.tr("Density detected."))
+
+        pointsOfWoodGeneration, woodVolumePerPointDictionary = WoodFluxHelper.polygonsToPoints(polygons_cutted,
+                                                                                               points_resolution,
+                                                                                               wood_density,
+                                                                                               isItVolume,
+                                                                                               wood_attribute_index,
+                                                                                               feedback)
+
+        # Then, because this algorithm needs the line network to be cut at each intersection., we will cut it.
+        # The user might have done it already; but just in case, we'll do it again thanks to one a
+        # QGIS processing algorithm.
         feedback.pushInfo(self.tr("Splitting lines..."))
         splittedLinesResult = processing.run("native:splitwithlines",
                                       {'INPUT': road_network,
@@ -259,8 +352,13 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
             if feedback.isCanceled():
                 raise QgsProcessingException(self.tr("ERROR: Operation was cancelled."))
 
-        # Then, we transform the ending points into a list of QgsPointXY we can compare to our lines.
-        tempSetOfEndingPoints = ending_points.getFeatures()
+        # Then, we transform the ending points of the network into a list of QgsPointXY we can compare to our lines.
+        # If the user have input a layer that is not a multipoint layer, we will first promote it to multipoint.
+        endingPointsAsMultipointsResult = processing.run("native:promotetomulti",
+                                             {'INPUT': ending_points,
+                                              'OUTPUT': 'memory:'})
+        endingPointsAsMultipoints = endingPointsAsMultipointsResult['OUTPUT']
+        tempSetOfEndingPoints = endingPointsAsMultipoints.getFeatures()
         setOfMultiEndingPoints = [endingPoint.geometry().asMultiPoint() for endingPoint in list(tempSetOfEndingPoints)]
         setOfEndingPoints = set()
         for multiEndingPoints in setOfMultiEndingPoints:
@@ -270,8 +368,8 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
         # Then, we update our line objects to reflect network structure. See function in Line class.
         feedback.pushInfo(self.tr("Scanning network structure..."))
 
-        # First, we got to initialize some k-d tree for some quick nearest-point searches, and the dictionnary
-        # relating ending points of lines to lines.
+        # First, we got to initialize some k-d tree for some quick nearest-point searches, and the dictionary
+        # relating extremities of lines to lines.
         endingPointsOfLines = set()
         linesEndingDictionary = dict()
         for line in setOfRoadsAsLines:
@@ -313,17 +411,9 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
             feedbackProgress += 1
             feedback.setProgress(100 * (feedbackProgress / len(setOfRoadsAsLines)))
 
-        # Then, we initialize the flux of wood that is going to go from each road. For that, we use the polygons
-        # given by the user.
-        feedback.pushInfo(self.tr("Analyzing harvested areas..."))
-
-        # First, thanks to the polygon extent and the wood density parameter, we will define the "points" inside the
-        # polygons from which the wood flux will come from.
-        pointsOfWoodGeneration = WoodFluxHelper.polygonsToPoints(polygons_cutted, wood_density, feedback)
-
-        # Then, for each of these points, we find the closest line; we add one unit of timber flux to this line.
+        # Then, for each of the wood source points, we find the closest line; we add units of timber flux to this line.
         feedback.pushInfo(self.tr("Generating wood flux from harvested areas..."))
-        WoodFluxHelper.generateWoodFlux(setOfRoadsAsLines, pointsOfWoodGeneration, feedback)
+        WoodFluxHelper.generateWoodFlux(setOfRoadsAsLines, pointsOfWoodGeneration, woodVolumePerPointDictionary, feedback)
 
         # Now, we can compute the fluxes that go through the network.
         # We initialize the objects for the loop.
@@ -436,19 +526,25 @@ class woodFluxAlgorithm(QgsProcessingAlgorithm):
 
     def shortHelpString(self):
         return self.tr("""
-        This algorithm determine how the wood flux will go throughout a forest road network. It takes into account the ending points of the network (where the wood must go) to find the shortest path throughout any point of the network to these endings : this is the direction the wood will flow.
+        This algorithm determine how the wood flux will go throughout a forest road network. To that end, it generates "wood source points" inside polygons where wood have been cut, and "flows" the wood toward the nearest exit point of the network.
         
         **Parameters:**
           
           Please ensure all the input layers have the same CRS.
         
-          - Road Network : a forest road network like the one created by the "Forest Road Network Creation" algorithm.
+          - Forest road network whose wood flux must be determined : straight-forward.
           
           - Polygons where the wood was cut : Polygons that correspond to the zones where timber will or have been harvested.
           
-          - Area in which one unit of timber will be produced in the polygon : This number will indicate the resolution at which one arbitrary unit of timber/wood will be produced in your harvest polygons. For example, if you input "100", the algorithm will place points with coordinates with a step of 100 (100,100;200,100;100,200; etc.) in your polygon. The algorithm then determines which road is the closest to each point, and the corresponding roads get added one arbitrary unit of wood flux for those points. This number depends on the  size of your polygons. The lower the number, the more precise this spatial computation will be; but it will take more time to compute.
+          - Density of points : The number of "wood-source-points" that will be generated inside the polygons for 1 unit of CRS. If the algorithm doesn't succeed in generating at least one point in a given polygon, it will trying again with a higher resolution until it succeeds. If the density is too low, some smaller roads in the network might have a flux of 0.
+          
+          - Attribute field for volume or density : An attribute field in the polygon layer where the wood was cut that contains information on the quantity of wood that is inside each polygon.
+          
+          - Density or volume of wood : Indicate if the measure in the previously given attribute field is a measure of volume of wood, or density of wood. If it is density, it will be considered that it is expressed in CRS units.
+          
+          - Arbitrary density : If no attribute field with information about the quantity of wood in the polygons has been previously given, this value will be used as a default density of wood for each of the polygons where the wood was cut. It is expressed in CRS units. 
          
-          - Ending points : points that correspond EXACTLY to the ending of the network, meaning its connection to the main road network. WARNING : If those points do not correspond exactly with the end of a line or the end of your network, the algorithm will have problems to complete. To generate them, you extract the nodes of your lines with the "Extract vertices" tool in QGIS; then, you can create a small buffer around the areas where the timber must go to, and use this buffer to select the nodes inside of it. These nodes will be your ending points.
+          - Ending points : points that correspond EXACTLY to the ending of the network, meaning its connection to the main road network. WARNING : If those points do not correspond exactly with the end of a line or the end of your network, or if there is not at least one such point per "branch" of your network, the algorithm will have problems to complete. To generate them, you can extract the nodes of your lines with the "Extract vertices" tool in QGIS; then, you can create a small buffer around the areas where the timber must go to, and use this buffer to select the nodes inside of it. These nodes will be your ending points.
             
           - Return empty roads : If a road is calculated to have a wood flux of 0, should it be saved in the output or be put aside ?        
         """)
@@ -482,7 +578,7 @@ class LineForAlgorithm:
         # These sets are temporary, and replaced by Downstream/upstream once they have been identified.
         self.linesConnectedToEnding1 = set()
         self.linesConnectedToEnding2 = set()
-        # Just boxed to put the above sets in, but properly identified.
+        # Just boxes to put the above sets in, but properly identified.
         self.linesConnectedDownstream = set()
         self.linesConnectedUpstream = set()
         # The flux of wood going through our road
@@ -676,26 +772,6 @@ class LineForAlgorithm:
         results["found"] = False
         return results
 
-    def _distanceToStart(self, startingLine, predecessors, feedback):
-        """Obsolete. This function is here to help with the previous function to find the distance to the starting line of
-        the search via the predecessors of this line."""
-
-        distance = self.lineLength
-        nextPredecessor = predecessors[self]
-        currentLine = self
-
-        try:
-            while nextPredecessor is not startingLine:
-                distance = distance + nextPredecessor.lineLength
-                currentLine = nextPredecessor
-                nextPredecessor = predecessors[currentLine]
-        except:
-            raise QgsProcessingException("ERROR : the starting line was not found via the predecessors search.")
-
-        # feedback.pushInfo("Distance calculated for line number " + str(self.uniqueID)  + " : " + str(distance))
-        return distance + startingLine.lineLength
-
-
     def getNeighborsDownstream(self):
         """For this function to work, the network initialization must be done. Also, it must be called during
         the algorithm so as force the fact that one of the neighbors must have a smaller flux.
@@ -775,73 +851,114 @@ class LineForAlgorithm:
 class WoodFluxHelper:
 
     @staticmethod
-    def polygonsToPoints(polygonLayer, pointsResolution, feedback):
+    def polygonsToPoints(polygonLayer, pointResolution, arbitraryDensity, isItVolume, wood_attribute_index, feedback):
         """This function transforms a given polygon layer into a set
         of QGS points according to a given resolution of points."""
 
         # We take all of the polygons from the polygon layer
         featuresOfLayer = list(polygonLayer.getFeatures())
         setOfPolygons = list()
+        # We will need a dictionary to register the attributes of the polygons concerning wood, if the user has indicated
+        # such an attribute in the polygons
+        volumeForPolygonDictionary = dict()
 
+        # First of all, for each single polygon where the wood was cut, we will calculate the wood volume contained
+        # in this polygon. The volume will be calculated either on a volume attribute for the polygon, a density attribute
+        # for the polygon, or an arbitrary density for all of the polygons.
         for given_feature in featuresOfLayer:
             if given_feature.hasGeometry():
-                given_feature = given_feature.geometry()
+                given_feature_geo = given_feature.geometry()
 
                 # Case of multipolygons
-                if given_feature.wkbType() == QgsWkbTypes.MultiPolygon:
-                    multi_polygon = given_feature.asMultiPolygon()
+                if given_feature_geo.wkbType() == QgsWkbTypes.MultiPolygon:
+                    multi_polygon = given_feature_geo.asMultiPolygon()
                     for polygon in multi_polygon:
                         setOfPolygons.append(polygon)
 
-                # Case of polygons
-                elif given_feature.wkbType() == QgsWkbTypes.Polygon:
-                    polygon = given_feature.asPolygon()
+                        polygonAsGeometry = QgsGeometry.fromPolygonXY(polygon)
+                        multiPolygonAsGeometry = QgsGeometry.fromMultiPolygonXY(multi_polygon)
+                        if wood_attribute_index is not None:
+                            # If the attribute is a volume, it needs to be divided for each small polygon relative to
+                            # the area of this polygon, since the attribute is for the multi-polygon.
+                            if isItVolume:
+                                volumeForPolygonDictionary[str(polygon)] = (polygonAsGeometry.area()/(multiPolygonAsGeometry.area())) \
+                                                               * given_feature.attributes()[wood_attribute_index]
+                            # If not, we calculate the volume based on the density : it is simply the density of the
+                            # polygon multiplied by its area
+                            else:
+                                volumeForPolygonDictionary[str(polygon)] = given_feature.attributes()[wood_attribute_index] \
+                                                                           * polygonAsGeometry.area()
+                        else:
+                            volumeForPolygonDictionary[str(polygon)] = arbitraryDensity * polygonAsGeometry.area()
+
+
+                # Case of single polygons
+                elif given_feature_geo.wkbType() == QgsWkbTypes.Polygon:
+                    polygon = given_feature_geo.asPolygon()
                     setOfPolygons.append(polygon)
+                    if wood_attribute_index is not None:
+                        if isItVolume:
+                            volumeForPolygonDictionary[str(polygon)] = given_feature.attributes()[wood_attribute_index]
+                        else:
+                            volumeForPolygonDictionary[str(polygon)] = given_feature.attributes()[wood_attribute_index] \
+                                                                       * QgsGeometry.fromPolygonXY(polygon).area()
+                    else:
+                        volumeForPolygonDictionary[str(polygon)] = arbitraryDensity * QgsGeometry.fromPolygonXY(polygon).area()
 
         setOfPointsToReturn = set()
+        woodVolumePerPointDictionary = dict()
         progress = 0
         feedback.setProgress(0)
 
         # Then, for each polygon, we will determine points that will correspond to a source
-        # of one arbitrary unit of wood, according to the resolution given by the user.
+        # of wood, according to the resolution given by the user. If no point was determined, we try again with
+        # a higher point resolution until some points are made inside the polygon.
         for polygon in setOfPolygons:
-            # For that, we take the extent of the polygon layer;
-            extentOfPolygon = QgsGeometry.fromPolygonXY(polygon).boundingBox()
+            setOfPointsInPolygon = set()
+            resolutionCorrection = 0
 
-            # Then, we loop around x and y coordinates according to the wood density parameter
-            leftX = extentOfPolygon.xMinimum()
-            rightX = extentOfPolygon.xMaximum()
-            bottomY = extentOfPolygon.yMinimum()
-            upperY = extentOfPolygon.yMaximum()
+            while len(setOfPointsInPolygon) == 0:
+                # For that, we take the extent of the polygon layer;
+                extentOfPolygon = QgsGeometry.fromPolygonXY(polygon).boundingBox()
 
-            # Now, we loop around the coordinates of the extent, with the resolution indicated by the user
-            listOfXCoordinates = [(x * float(pointsResolution)) + leftX for x in
-                              range(0, int((rightX - leftX) / pointsResolution))]
-            listOfYCoordinates = [(y * float(pointsResolution)) + bottomY for y in
-                              range(0, int((upperY - bottomY) / pointsResolution))]
+                # Then, we loop around x and y coordinates according to the wood density parameter
+                leftX = extentOfPolygon.xMinimum()
+                rightX = extentOfPolygon.xMaximum()
+                bottomY = extentOfPolygon.yMinimum()
+                upperY = extentOfPolygon.yMaximum()
 
-            for x in listOfXCoordinates:
-                # feedback.pushInfo("Coordinate x : " + str(x))
-                for y in listOfYCoordinates:
-                    # feedback.pushInfo("Coordinate y : " + str(y))
-                    if feedback.isCanceled():
-                        raise QgsProcessingException("ERROR: Process canceled.")
-                    # for polygon in setOfPolygons:
-                        # feedback.pushInfo("Polygon : " + str(QgsGeometry.fromPolygonXY(polygon).asWkt()))
-                    point = QgsPointXY(x, y)
-                    if QgsGeometry.fromPolygonXY(polygon).contains(point):
-                        # feedback.pushInfo("We added a point !")
-                        setOfPointsToReturn.add(point)
-                    # else:
-                        # feedback.pushInfo("We did not add a point !")
-                    # feedback.setProgress(100 * progress / (len(listOfXCoordinates) * len(listOfYCoordinates)))
+                # Then, we loop around an incrementation of x and y coordinates in the extent of the polygon,
+                # with the resolution given by the user. For each set of coordinates, we check if it is a point
+                # inside the polygon. If it is, we add it as a point that will be a source of wood.
+                x = leftX
+                while x <= rightX:
+                    y = bottomY
+                    while y <= upperY:
+                        if feedback.isCanceled():
+                            raise QgsProcessingException("ERROR: Process canceled.")
+                        point = QgsPointXY(x, y)
+                        if QgsGeometry.fromPolygonXY(polygon).contains(point):
+                            setOfPointsToReturn.add(point)
+                            setOfPointsInPolygon.add(point)
+                        y += (1 / (pointResolution + resolutionCorrection))
+                    x += (1 / (pointResolution + resolutionCorrection))
+
+                resolutionCorrection += 0.5 * pointResolution
+
+            # For each point generated in the polygon, we add it in a dictionary to know what volume of wood is
+            # associated to that point. It's simply the volume for the polygon divided by the number of source points
+            # generated in this polygon.
+            for point in setOfPointsInPolygon:
+                woodVolumePerPointDictionary[point] = volumeForPolygonDictionary[str(polygon)] \
+                                                      / float(len(setOfPointsInPolygon))
+
             progress += 1
             feedback.setProgress(100 * progress / (len(setOfPolygons)))
 
-        return setOfPointsToReturn
+        return setOfPointsToReturn, woodVolumePerPointDictionary
 
     @staticmethod
-    def generateWoodFlux(setOfRoadsAsLines, pointsOfWoodGeneration, feedback):
+    def generateWoodFlux(setOfRoadsAsLines, pointsOfWoodGeneration, woodVolumePerPointDictionary, feedback):
         """This function links the points from where the wood will come from in the network
         to the lines created in the algorithm"""
 
@@ -866,8 +983,8 @@ class WoodFluxHelper:
             # We find the closest point, and put it into the dictionary to extract the closest line
             closestPointIndex = spatialKDTREEForDistanceSearch.query(point)[1]
             closestLine = pointToLineDictionnary[list(setOfPointsFromTheLines)[closestPointIndex]]
-            # Then, we add a wood flux of "1" from this point to this line
-            closestLine.flux += 1
+            # Then, we add a wood flux from the point to this line
+            closestLine.flux += woodVolumePerPointDictionary[point]
             progress += 1
             # feedback.pushInfo("Added 1 flux to line : " + str(closestLine.uniqueID))
             feedback.setProgress(100 * progress / (len(pointsOfWoodGeneration)))
