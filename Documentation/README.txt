@@ -26,9 +26,9 @@
  
  To use the plugin, install QGIS v.3.0 minimum, and use the plugin repository to install the plugin.
  
- Once installed, it can be found in the category "Vector", or via searching in the toolbox (Name : "Forest Road Network Creation")
+ Once installed, it can be found in the category "Vector", or via searching in the toolbox (Name : "Forest Road Network Plugin")
  
- Each of the algorithms in the plugin have different inputs, described in their corresponding interface in detail.
+ Each of the algorithms in the plugin have different inputs, described in their corresponding interface in detail. More detailed information can be found on github at https://github.com/Klemet/ForestRoadNetworkPluginForQGIS
  
  2) WARNINGS
  

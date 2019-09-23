@@ -20,6 +20,39 @@ To use the plugin, simply choose the algorithm you need to use in the QGIS proce
 
 ![Plugin in the QGIS processing toolbox](Test_data/images/PluginInToolbox.PNG)
 
+## The "Cost Raster Creator" algorithm
+
+This algorithm creates a cost raster based on 6 different rasters, and 5 different associated parameters. Only one raster and one parameter are obligatory; the others are optional.
+
+The rasters are :
+
+- A raster containing information about existing roads (0 = no road, anything else = existing road)
+- A raster containing additional cost related to soils, compared to the basic "reference" cost of construction of a road on a pixel (see parameters)
+- A raster containing elevation data
+- A raster containing information about fine topographic element, such as contour lines (e.g. number or length of contour lines in a pixel)
+- A raster containing information about bodies of water (lake, rivers) onto which a bridge is necessary (0 = no water, anything else = body of water in the pixel)
+- A raster containing information about streams crossing the pixel (e.g. number or length of streams in the pixel)
+
+Only one of these raster is needed to launch the algorithm.
+
+The parameters are :
+
+- The reference cost of building a forest road of the smallest type on a flat terrain and with the best type of soil for road construction, on the length of a pixel
+- The "slope" parameter that multiplies the mean slope of a pixel to obtain an additional cost of construction
+- The "fine topography threshold" parameter; above this threshold for the fine topography raster (see above), the cost of construction will be multiplied by 2 due to detours that will have to be made to cross the pixel with a forest road
+- The "bridge" parameter, which correspond to the mean cost of constructing a bridge on a body of water the size of a pixel
+- The "culvert" parameter, which is the mean cost of construction a culvert on a stream
+
+Only the reference cost parameter is needed to launch the algorithm.
+
+We advise that the parameters and the cost rasters are all expressed in monetary units (such as dollards or euros) in order to facilitate parametrisation, and to better interpret the results of the Forest Road Network Creation algorithm (see below) if the cost raster produced by this algorithm is used for it.
+ 
+**Interface of the "Cost Raster Creator" algorithm**
+![Interface](Test_data/images/CostRasterCreator_Interface.PNG)
+
+**Example of result from the "Cost Raster Creator" algorithm**
+![Result](Test_data/images/CostRasterCreator_Result.png)
+
 
 ## The "Forest Road Network Creation" algorithm
 
@@ -29,6 +62,7 @@ The use of a heuristic to cut the MTAP (Multiple Target Access Problem) that rep
  
 **Interface of the "Forest Road Network Creation" algorithm**
 ![Interface](Test_data/images/ForestRoadNetworkCreation_Interface.PNG)
+
 **Example of result from the "Forest Road Network Creation" algorithm**
 ![Result](Test_data/images/ForestRoadNetworkCreation_Result.png)
 
@@ -41,6 +75,7 @@ Using a hydrological approach coupled with the calculation of the least-cost pat
  
 **Interface of the "Wood Flux Determination" algorithm**
 ![Interface](Test_data/images/WoodFluxDetermination_Interface.PNG)
+
 **Example of result from the "Wood Flux Determination" algorithm**
 ![Result](Test_data/images/WoodFluxDetermination_Result.png)
 
@@ -51,6 +86,7 @@ The user must also indicate thresholds of wood flux to select the right road typ
 
 **Interface of the "Road Type Determination" algorithm**
 ![Interface](Test_data/images/RoadTypeDetermination_Interface.PNG)
+
 **Example of result from the "Road Type Determination" algorithm**
 ![Result](Test_data/images/RoadTypeDetermination_Result.png)
 
