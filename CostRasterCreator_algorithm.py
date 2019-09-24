@@ -61,6 +61,7 @@ from qgis.core import (
     QgsProcessingParameterBoolean,
     QgsProcessingParameterNumber,
     QgsProcessingParameterEnum,
+    QgsProcessingParameterMatrix,
     QgsRasterFileWriter
 )
 # We import mathematical functions needed for the algorithm.
@@ -87,11 +88,11 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
 
     COARSE_ELEVATION_RASTER = 'COARSE_ELEVATION_RASTER'
 
-    COARSE_ELEVATION_COST = 'COARSE_ELEVATION_COST'
+    COARSE_ELEVATION_COSTS = 'COARSE_ELEVATION_COSTS'
 
     FINE_ELEVATION_RASTER = 'FINE_ELEVATION_RASTER'
 
-    FINE_ELEVATION_THRESHOLD = 'FINE_ELEVATION_THRESHOLD'
+    FINE_ELEVATION_COSTS = 'FINE_ELEVATION_COSTS'
 
     COARSE_WATER_RASTER = 'COARSE_WATER_RASTER'
 
@@ -140,15 +141,13 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
         )
 
         self.addParameter(
-            QgsProcessingParameterNumber(
-                self.COARSE_ELEVATION_COST,
-                self.tr(
-                    'Coarse elevation cost'),
-                type=QgsProcessingParameterNumber.Double,
-                defaultValue=100,
-                optional=True,
-                minValue=1
-            )
+            QgsProcessingParameterMatrix(self.COARSE_ELEVATION_COSTS,
+                                         "Additional costs associated with mean values of slope in a pixel",
+                                         numberRows=2,
+                                         hasFixedNumberRows=False,
+                                         headers=["Lower slope threshold", "Upper slope threshold", "Additional Cost"],
+                                         defaultValue = ['0', '10', '0', '10', '100', '5000'],
+                                         optional = True)
         )
 
         self.addParameter(
@@ -160,15 +159,13 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
         )
 
         self.addParameter(
-            QgsProcessingParameterNumber(
-                self.FINE_ELEVATION_THRESHOLD,
-                self.tr(
-                    'Fine elevation threshold'),
-                type=QgsProcessingParameterNumber.Double,
-                defaultValue=3,
-                optional=True,
-                minValue=1
-            )
+            QgsProcessingParameterMatrix(self.FINE_ELEVATION_COSTS,
+                                         "Multiplicative costs associated with values of fine topography in a pixel",
+                                         numberRows=2,
+                                         hasFixedNumberRows=False,
+                                         headers=["Lower threshold", "Upper threshold", "Multiplicative Cost"],
+                                         defaultValue=['0', '300', '1', '300', '1000', '2'],
+                                         optional = True)
         )
 
         self.addParameter(
@@ -263,18 +260,19 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
         else:
             coarse_elevation_raster = None
 
-        if self.parameterAsDouble(
+        if self.parameterAsMatrix(
             parameters,
-            self.COARSE_ELEVATION_COST,
+            self.COARSE_ELEVATION_COSTS,
             context
         ):
-            coarse_elevation_cost = self.parameterAsDouble(
+            coarse_elevation_costs = self.parameterAsMatrix(
                 parameters,
-                self.COARSE_ELEVATION_COST,
+                self.COARSE_ELEVATION_COSTS,
                 context
             )
+            coarse_elevation_costs = CostRasterCreatorHelper.CollapsedTableToMatrix(coarse_elevation_costs, 3)
         else:
-            coarse_elevation_cost = None
+            coarse_elevation_costs = None
 
         if self.parameterAsRasterLayer(
             parameters,
@@ -289,18 +287,19 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
         else:
             fine_elevation_raster = None
 
-        if self.parameterAsDouble(
+        if self.parameterAsMatrix(
             parameters,
-            self.FINE_ELEVATION_THRESHOLD,
+            self.FINE_ELEVATION_COSTS,
             context
         ):
-            fine_elevation_threshold = self.parameterAsDouble(
+            fine_elevation_costs = self.parameterAsMatrix(
                 parameters,
-                self.FINE_ELEVATION_THRESHOLD,
+                self.FINE_ELEVATION_COSTS,
                 context
             )
+            fine_elevation_costs = CostRasterCreatorHelper.CollapsedTableToMatrix(fine_elevation_costs, 3)
         else:
-            fine_elevation_threshold = None
+            fine_elevation_costs = None
 
         if self.parameterAsRasterLayer(
             parameters,
@@ -393,7 +392,16 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
         if len(listOfRastersToCheck) == 0:
             raise QgsProcessingException(self.tr("At least one input raster is needed ! Please, input one raster."))
 
+        # We check that every raster has the same CRS, extent and resolution.
         CostRasterCreatorHelper.CheckRastersCompatibility(listOfRastersToCheck)
+
+        # We also check that the matrix of parameters entered for the coarse elevation costs and fine elevation costs
+        # are correct : meaning that there are no holes between the thresholds, and that every lower threshold is lower
+        # than the upper threshold.
+        if coarse_elevation_costs is not None:
+            CostRasterCreatorHelper.CheckThresholds(coarse_elevation_costs, "Coarse elevation costs")
+        if fine_elevation_costs is not None:
+            CostRasterCreatorHelper.CheckThresholds(fine_elevation_costs, "Fine elevation costs")
 
         # Then, we create the raster blocks
         if initial_road_network_raster is not None:
@@ -462,6 +470,7 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
         feedback.pushInfo(self.tr("Calculating cost raster..."))
         progress = 0
         feedback.setProgress(0)
+        errorMessages = list()
         for y in range(dataBlock.height()):
             for x in range(dataBlock.width()):
                 if feedback.isCanceled():
@@ -495,11 +504,14 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
                         # feedback.pushInfo("After soils, final value is " + str(finalValue))
                     # Then the coarse elevation value
                     if coarse_elevation_raster_block is not None:
-                        finalValue += CostRasterCreatorHelper.CalculateCoarseElevationCost(y,
+                        additionalValue, errorMessage = CostRasterCreatorHelper.CalculateCoarseElevationCost(y,
                                                                                            x,
                                                                                            coarse_elevation_raster_block,
-                                                                                           coarse_elevation_cost,
+                                                                                           coarse_elevation_costs,
                                                                                            pixelSide)
+                        finalValue += additionalValue
+                        if errorMessage is not None:
+                            errorMessages.append(errorMessage)
                         # feedback.pushInfo("After coarse elevation, final value is " + str(finalValue))
                     # Then the fine water value
                     if fine_water_raster_block is not None:
@@ -511,11 +523,13 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
                         # feedback.pushInfo("After fine water, final value is " + str(finalValue))
                     # Then, we multiply everything with the fine elevation cost.
                     if fine_elevation_raster_block is not None:
-                        finalValue = CostRasterCreatorHelper.CalculateFineElevationCost(y,
+                        finalValue, errorMessage = CostRasterCreatorHelper.CalculateFineElevationCost(y,
                                                                                     x,
                                                                                     fine_elevation_raster_block,
-                                                                                    fine_elevation_threshold,
+                                                                                    fine_elevation_costs,
                                                                                     finalValue)
+                        if errorMessage is not None:
+                            errorMessages.append(errorMessage)
                         # feedback.pushInfo("After fine elevation, final value is " + str(finalValue))
                 dataBlock.setValue(y, x, float(finalValue))
 
@@ -527,6 +541,22 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
 
         # We stop the edition of the output raster
         provider.setEditable(False)
+
+        # We display the warning messages about the thresholds
+        if len(errorMessages) > 0:
+            above = 0
+            below = 0
+            for errorMessage in errorMessages:
+                if errorMessage == "Above":
+                    above += 1
+                elif errorMessage == "Below":
+                    below += 1
+            feedback.pushInfo(self.tr("WARNING : There were " + str(below) + " situations where the value of a pixel was under"
+                            " the lowest threshold given as a parameter; and " + str(above) + " when it was above the"
+                            " highest. In those cases, the lowest or highest value of the parameter range was used."
+                            " To avoid that, please make sure to use thresholds that cover all of the range of values in"
+                            " your rasters."))
+
 
         # We make the output
         return {self.OUTPUT: outputFile}
@@ -626,6 +656,21 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
 # Methods to help the algorithm; all static, do not need to initialize an object of this class.
 class CostRasterCreatorHelper:
 
+    @staticmethod
+    def CollapsedTableToMatrix(matrixOfThresholds, numberOfColumns):
+        """This function exist to counter the fact that QGIS collapses the matrix of parameters into a list. It puts
+        it back into a proper matrix, meaning a list of lists. It also transforms the strings in the matrix into numbers."""
+
+        matrixOfThresholdsAsNumber = list(map(float, matrixOfThresholds))
+
+        numberOfRows = len(matrixOfThresholdsAsNumber) // numberOfColumns
+        matrixToReturn = list()
+
+        for indexing in range(numberOfRows):
+            matrixToReturn.append(matrixOfThresholdsAsNumber[(indexing * numberOfColumns):(indexing * numberOfColumns + numberOfColumns)])
+
+        return matrixToReturn
+
     # Function that get the data block from a entire raster for a given band
     @staticmethod
     def get_all_block(raster_layer):
@@ -660,7 +705,55 @@ class CostRasterCreatorHelper:
                         raise QgsProcessingException("ERROR: The input rasters have different rasterUnitsPerPixelY.")
 
     @staticmethod
-    def CalculateCoarseElevationCost(row, column, coarse_elevation_raster_block, coarse_elevation_cost, pixelSide):
+    def CheckThresholds(matrixOfThresholds, thresholdsName):
+        """This function check if there are no holes in threshold parameters, and if every lower threshold is inferior
+        to the associated upper threshold. If not, we raise an exception."""
+
+        for index in range(len(matrixOfThresholds)):
+            lowerThreshold = matrixOfThresholds[index][0]
+            upperThreshold = matrixOfThresholds[index][1]
+            if lowerThreshold >= upperThreshold:
+                raise QgsProcessingException("ERROR: For the parameter " + str(thresholdsName) + ", the lower threshold of"
+                                            " row " + str(index) + " is bigger or equal to the upper threshold of the same row."
+                                            " Please, correct it before trying again.")
+            if (index + 1) < len(matrixOfThresholds):
+                lowerThresholdOfHigherRow = matrixOfThresholds[index + 1][0]
+                if (lowerThresholdOfHigherRow - upperThreshold) != 0:
+                    raise QgsProcessingException(
+                        "ERROR: For the parameter " + str(thresholdsName) + ", there is a hole between the upper threshold of"
+                        " row " + str(index) + " and the lower threshold of row " + str(index+1) + ". The thresholds must"
+                        " be continuous and ordered from smaller to higher. Please, correct it before trying again.")
+
+    @staticmethod
+    def GetThresholdValue(matrixOfThresholds, valueInsideThresholds):
+        """This function gets the associated value (additional value or multiplicative value) inside a matrix of thresholds
+        (third column) given a value that will be inside one of the thresholds. Is also register error messages to warn
+        the user about values that are not into its thresholds."""
+
+        thresholdValue = None
+        errorMessage = None
+
+        # First, we treat the case of our value being under the lowest threshold, or higher than the highest threshold.
+        if valueInsideThresholds <  matrixOfThresholds[0][0]:
+            thresholdValue = matrixOfThresholds[0][2]
+            errorMessage = "Below"
+        elif valueInsideThresholds > matrixOfThresholds[len(matrixOfThresholds) - 1][1]:
+            thresholdValue = matrixOfThresholds[len(matrixOfThresholds) - 1][2]
+            errorMessage = "Above"
+        else:
+            for index in range(len(matrixOfThresholds)):
+                if valueInsideThresholds >= matrixOfThresholds[index][0] and valueInsideThresholds < matrixOfThresholds[index][1]:
+                    thresholdValue = matrixOfThresholds[index][2]
+                    break
+
+        if thresholdValue is None:
+            raise QgsProcessingException("ERROR: Couldn't find value " + str(valueInsideThresholds) + " in the following"
+                                         " matrix of thresholds : " + str(matrixOfThresholds))
+        else:
+            return thresholdValue, errorMessage
+
+    @staticmethod
+    def CalculateCoarseElevationCost(row, column, coarse_elevation_raster_block, coarse_elevation_costs, pixelSide):
         """"A function to calculate the coarse elevation cost of a pixel. Current method is to make the mean of the
         difference in elevation between neighbouring pixels, to transform it into slope percentage using the pixel size,
         and then multiply it by the coarse elevation cost."""
@@ -720,7 +813,8 @@ class CostRasterCreatorHelper:
 
         meanSlope = meanSlope / float(numberOfNeighbors)
 
-        return meanSlope * coarse_elevation_cost
+        additionalCost, errorMessage = CostRasterCreatorHelper.GetThresholdValue(coarse_elevation_costs, meanSlope)
+        return meanSlope * additionalCost, errorMessage
 
     @staticmethod
     def CalculateFineWaterCost(row, column, fine_water_raster_block, fine_water_cost, pixelSize):
@@ -733,20 +827,22 @@ class CostRasterCreatorHelper:
         return numberOfStreamsToCross * fine_water_cost
 
     @staticmethod
-    def CalculateFineElevationCost(row, column, fine_elevation_raster_block, fine_elevation_threshold, valueToUpdate):
+    def CalculateFineElevationCost(row, column, fine_elevation_raster_block, fine_elevation_costs, valueToUpdate):
         """A function to calculate the fine elevation cost of a pixel. We will take the cost for this pixel, and
         multiply it by how much detour must be done because of fine changes in the topography."""
 
         # The threshold given by the user is for multiplying the cost of construction by 2. We would it for 1, so as
         # to make a floor division in the case of higher values.
-        singleUnitOfRoadThreshold = fine_elevation_threshold / float(2)
+        # singleUnitOfRoadThreshold = fine_elevation_threshold / float(2)
 
-        multiplicationDueToFineElevation = fine_elevation_raster_block.value(row, column) // singleUnitOfRoadThreshold
+        #multiplicationDueToFineElevation = fine_elevation_raster_block.value(row, column) // singleUnitOfRoadThreshold
+        fineElevationValue = fine_elevation_raster_block.value(row, column)
+        multiplicationDueToFineElevation, errorMessage = CostRasterCreatorHelper.GetThresholdValue(fine_elevation_costs, fineElevationValue)
 
         if multiplicationDueToFineElevation > 1:
-            return valueToUpdate * multiplicationDueToFineElevation
+            return valueToUpdate * multiplicationDueToFineElevation, errorMessage
         else:
-            return valueToUpdate
+            return valueToUpdate, errorMessage
 
 
 
