@@ -57,7 +57,9 @@ from qgis.core import (
     QgsProcessingParameterBand,
     QgsProcessingParameterBoolean,
     QgsProcessingParameterNumber,
-    QgsProcessingParameterEnum
+    QgsProcessingParameterMatrix,
+    QgsProcessingParameterEnum,
+    QgsProcessingParameterString
 )
 
 
@@ -79,15 +81,15 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
 
     FLUX_FIELD = 'FLUX_FIELD'
 
+    ROAD_TYPES_AND_THRESHOLDS = 'ROAD_TYPES_AND_THRESHOLDS'
+
+    TEMPORARY_ROAD_NAME = 'TEMPORARY_ROAD_NAME'
+
+    TEMPORARY_ROAD_PERCENTAGE = 'TEMPORARY_ROAD_PERCENTAGE'
+
     TEMPORARY_ROADS_PRIORITY_POLYGONS = 'TEMPORARY_ROADS_PRIORITY_POLYGONS'
 
     TEMPORARY_ROADS_PRIORITY_FIELD = 'TEMPORARY_ROADS_PRIORITY_FIELD'
-
-    TERTIARY_SECONDARY_THRESHOLD = 'TERTIARY_SECONDARY_THRESHOLD'
-
-    SECONDARY_PRIMARY_THRESHOLD = 'SECONDARY_PRIMARY_THRESHOLD'
-
-    TEMPORARY_ROAD_PERCENTAGE = 'TEMPORARY_ROAD_PERCENTAGE'
 
     OUTPUT = 'OUTPUT'
 
@@ -114,6 +116,39 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
+
+        self.addParameter(
+            QgsProcessingParameterMatrix(self.ROAD_TYPES_AND_THRESHOLDS,
+                                         "The different road types you want to use, and the associated thresholds of wood flux to select one of them",
+                                         numberRows=3,
+                                         hasFixedNumberRows=False,
+                                         headers=["Lower threshold", "Upper threshold", "Road type name"],
+                                         defaultValue=['0', '500', 'Tertiary',
+                                                       '500', '5000', 'Secondary',
+                                                       '5000', '1000000', 'Primary'],
+                                         optional=False)
+        )
+
+        self.addParameter(
+            QgsProcessingParameterString(
+                self.TEMPORARY_ROAD_NAME,
+                self.tr('Name of the road type that can is available to become temporary roads (leave empty for no temporary roads)'),
+                multiLine = False,
+                optional=True
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                self.TEMPORARY_ROAD_PERCENTAGE,
+                self.tr('Percentage of temporary roads that can be accommodated as temporary roads (e.g. winter roads)'),
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=50,
+                optional=True,
+                minValue=0
+            )
+        )
+
         self.addParameter(
             QgsProcessingParameterFeatureSource(
                 self.TEMPORARY_ROADS_PRIORITY_POLYGONS,
@@ -126,43 +161,10 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterField(
                 self.TEMPORARY_ROADS_PRIORITY_FIELD,
-                self.tr('Attribute field of the previous polygon layer defining in which polygon should the temporary roads be build first'),
+                self.tr('Attribute field of the previous polygon layer defining in which polygon should the temporary roads be build in priority'),
                 parentLayerParameterName=self.TEMPORARY_ROADS_PRIORITY_POLYGONS,
                 type=QgsProcessingParameterField.Numeric,
                 optional=True
-            )
-        )
-
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                self.TERTIARY_SECONDARY_THRESHOLD,
-                self.tr('Threshold of wood flux under which a forest road will be a tertiary road, and over it a secondary road.'),
-                type=QgsProcessingParameterNumber.Double,
-                defaultValue=20,
-                optional=False,
-                minValue=0
-            )
-        )
-
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                self.SECONDARY_PRIMARY_THRESHOLD,
-                self.tr('Threshold of wood flux under which a forest road will be a secondary road, and over it a primary road.'),
-                type=QgsProcessingParameterNumber.Double,
-                defaultValue=100,
-                optional=False,
-                minValue=1
-            )
-        )
-
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                self.TEMPORARY_ROAD_PERCENTAGE,
-                self.tr('Percentage of temporary roads that can be accommodated as temporary roads (e.g. winter roads)'),
-                type=QgsProcessingParameterNumber.Double,
-                defaultValue=50,
-                optional=False,
-                minValue=0
             )
         )
 
@@ -192,6 +194,40 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
+        road_type_and_thresholds = self.parameterAsMatrix(
+            parameters,
+            self.ROAD_TYPES_AND_THRESHOLDS,
+            context
+        )
+
+        road_type_and_thresholds = RoadTypeDeterminationHelper.CollapsedTableToMatrix(road_type_and_thresholds, 3)
+
+        if self.parameterAsString(
+                parameters,
+                self.TEMPORARY_ROAD_NAME,
+                context
+        ):
+            temporary_road_name = self.parameterAsString(
+                parameters,
+                self.TEMPORARY_ROAD_NAME,
+                context
+                )
+        else:
+            temporary_road_name = None
+
+        if self.parameterAsInt(
+            parameters,
+            self.TEMPORARY_ROAD_PERCENTAGE,
+            context
+            ):
+            temporaryRoadPercentage = self.parameterAsInt(
+            parameters,
+            self.TEMPORARY_ROAD_PERCENTAGE,
+            context
+            )
+        else:
+            temporaryRoadPercentage = None
+
         if self.parameterAsVectorLayer(
             parameters,
             self.TEMPORARY_ROADS_PRIORITY_POLYGONS,
@@ -220,24 +256,6 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
         else:
             priority_field_index = None
 
-        tertiarySecondaryThreshold = self.parameterAsInt(
-            parameters,
-            self.TERTIARY_SECONDARY_THRESHOLD,
-            context
-        )
-
-        secondaryPrimaryThreshold = self.parameterAsInt(
-            parameters,
-            self.SECONDARY_PRIMARY_THRESHOLD,
-            context
-        )
-
-        temporaryRoadPercentage = self.parameterAsInt(
-            parameters,
-            self.TEMPORARY_ROAD_PERCENTAGE,
-            context
-        )
-
         # If source was not found, throw an exception to indicate that the algorithm
         # encountered a fatal error. The exception text can be any string, but in this
         # case we use the pre-built invalidSourceError method to return a standard
@@ -246,21 +264,16 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
             raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT_ROAD_NETWORK))
         if flux_field_index is None:
             raise QgsProcessingException(self.invalidSourceError(parameters, self.FLUX_FIELD))
-        if tertiarySecondaryThreshold is None:
+        if road_type_and_thresholds is None:
             raise QgsProcessingException(self.invalidSourceError(parameters, self.TERTIARY_SECONDARY_THRESHOLD))
-        if secondaryPrimaryThreshold is None:
-            raise QgsProcessingException(self.invalidSourceError(parameters, self.SECONDARY_PRIMARY_THRESHOLD))
-        if temporaryRoadPercentage is None:
-            raise QgsProcessingException(self.invalidSourceError(parameters, self.TEMPORARY_ROAD_PERCENTAGE))
 
         # We try to see if there are divergence between the CRSs of the inputs
         if temporary_roads_priority_polygons is not None:
             if road_network.crs() != temporary_roads_priority_polygons.sourceCrs():
                 raise QgsProcessingException(self.tr("ERROR: The input layers have different CRSs."))
 
-        if tertiarySecondaryThreshold > secondaryPrimaryThreshold:
-            raise QgsProcessingException(self.tr("ERROR: The secondary/primary road threshold is inferior to the " +
-                                                 "tertiary/secondary road threshold."))
+        RoadTypeDeterminationHelper.CheckThresholds(road_type_and_thresholds, "Road types and thresholds")
+
         if temporaryRoadPercentage < 0 or temporaryRoadPercentage > 100:
             raise QgsProcessingException(self.tr("ERROR: Temporary road percentage is not between 0 and 100."))
 
@@ -324,70 +337,70 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
         feedback.pushInfo(self.tr("Calculating the broad types of roads..."))
         progress = 0
         feedback.setProgress(0)
+        errorMessages = list()
         # We now determine the broad type for each road.
         typeOfRoad = dict()
 
         for line in lineFeaturesOfRoadNetwork:
             attributesOfLine = line.attributes()
-            # Case of being a primary road
-            if attributesOfLine[flux_field_index] > secondaryPrimaryThreshold:
-                typeOfRoad[line] = "Primary"
-            elif attributesOfLine[flux_field_index] > tertiarySecondaryThreshold:
-                typeOfRoad[line] = "Secondary"
-            else:
-                typeOfRoad[line] = "Tertiary"
+
+            typeOfRoad[line], errorMessage = RoadTypeDeterminationHelper.GetThresholdValue(road_type_and_thresholds,
+                                                                             attributesOfLine[flux_field_index])
+            if errorMessage is not None:
+                errorMessages.append(errorMessage)
+
             progress += 1
             feedback.setProgress(100 * (progress / len(lineFeaturesOfRoadNetwork)))
 
+        if temporary_road_name is not None and (temporaryRoadPercentage is not None and temporaryRoadPercentage != 0):
+            progress = 0
+            feedback.setProgress(0)
+            # Now, to know which tertiary road can become temporary ones
+            # First, we get all of the roads that have been indicated as tertiary.
+            potentialTemporaryRoads = list()
+            for keyLine in typeOfRoad:
+                if typeOfRoad[keyLine] == temporary_road_name:
+                    potentialTemporaryRoads.append(keyLine)
 
-        progress = 0
-        feedback.setProgress(0)
-        # Now, to know which tertiary road can become temporary ones
-        # First, we get all of the roads that have been indicated as tertiary.
-        tertiaryLines = list()
-        for keyLine in typeOfRoad:
-            if typeOfRoad[keyLine] == "Tertiary":
-                tertiaryLines.append(keyLine)
+            feedback.pushInfo(self.tr("Calculating the temporary roads..."))
+            # Then, there is the case where we do not have polygons to give us priority zones where temporary roads should
+            # be. If that's the case, we order our list via the length of each line.
+            if temporary_roads_priority_polygons is None and temporaryRoadPercentage > 0:
+                # Smallest roads first ! It's intuitive that small roads can easily be made into temporary roads
+                potentialTemporaryRoads.sort(key=lambda x: x.geometry().length())
 
-        feedback.pushInfo(self.tr("Calculating the temporary roads..."))
-        # Then, there is the case where we do not have polygons to give us priority zones where temporary roads should
-        # be. If that's the case, we order our list via the length of each line.
-        if temporary_roads_priority_polygons is None and temporaryRoadPercentage > 0:
-            # Smallest roads first ! It's intuitive that small roads can easily be made into temporary roads
-            tertiaryLines.sort(key=lambda x: x.geometry().length())
+            # If we have priority polygons, we will get the priority value of each tertiary road and use it to sort our list
+            elif temporary_roads_priority_polygons is not None \
+                    and priority_field_index is not None \
+                    and temporaryRoadPercentage > 0:
+                polygoneFeatures = list(temporary_roads_priority_polygons.getFeatures())
+                potentialTemporaryRoads = RoadTypeDeterminationHelper.SortWithPriorityPolygons(potentialTemporaryRoads,
+                                                                                    polygoneFeatures,
+                                                                                    priority_field_index)
 
-        # If we have priority polygons, we will get the priority value of each tertiary road and use it to sort our list
-        elif temporary_roads_priority_polygons is not None \
-                and priority_field_index is not None \
-                and temporaryRoadPercentage > 0:
-            polygoneFeatures = list(temporary_roads_priority_polygons.getFeatures())
-            tertiaryLines = RoadTypeDeterminationHelper.SortWithPriorityPolygons(tertiaryLines,
-                                                                                polygoneFeatures,
-                                                                                priority_field_index)
+            if temporaryRoadPercentage > 0:
+                # We loop and convert the lines until we reach the given percentage of length of tertiary roads that have
+                # been converted
+                percentageOfLengthConverted = 0
+                index = 0
+                totalLengthOfTertiaryRoads = 0
+                for road in potentialTemporaryRoads:
+                    totalLengthOfTertiaryRoads += road.geometry().length()
 
-        if temporaryRoadPercentage > 0:
-            # We loop and convert the lines until we reach the given percentage of length of tertiary roads that have
-            # been converted
-            percentageOfLengthConverted = 0
-            index = 0
-            totalLengthOfTertiaryRoads = 0
-            for road in tertiaryLines:
-                totalLengthOfTertiaryRoads += road.geometry().length()
-
-            while percentageOfLengthConverted < temporaryRoadPercentage and index < len(tertiaryLines):
-                currentRoad = tertiaryLines[index]
-                # If we have polygons indicating where the temporary can be build, we look if the road is inside one of them.
-                if temporary_roads_priority_polygons is not None:
-                    if RoadTypeDeterminationHelper.IsThisLineInAPolygon(currentRoad, temporary_roads_priority_polygons):
+                while percentageOfLengthConverted < temporaryRoadPercentage and index < len(potentialTemporaryRoads):
+                    currentRoad = potentialTemporaryRoads[index]
+                    # If we have polygons indicating where the temporary can be build, we look if the road is inside one of them.
+                    if temporary_roads_priority_polygons is not None:
+                        if RoadTypeDeterminationHelper.IsThisLineInAPolygon(currentRoad, temporary_roads_priority_polygons):
+                            typeOfRoad[currentRoad] = "Temporary"
+                            percentageOfLengthConverted += (currentRoad.geometry().length() / totalLengthOfTertiaryRoads) * 100
+                    else:
                         typeOfRoad[currentRoad] = "Temporary"
                         percentageOfLengthConverted += (currentRoad.geometry().length() / totalLengthOfTertiaryRoads) * 100
-                else:
-                    typeOfRoad[currentRoad] = "Temporary"
-                    percentageOfLengthConverted += (currentRoad.geometry().length() / totalLengthOfTertiaryRoads) * 100
 
-                index += 1
-                progress += 1
-                feedback.setProgress(100 * (percentageOfLengthConverted / temporaryRoadPercentage))
+                    index += 1
+                    progress += 1
+                    feedback.setProgress(100 * (percentageOfLengthConverted / temporaryRoadPercentage))
 
         feedback.pushInfo(self.tr("Creating the output..."))
         # Once that all of this is done, we prepare the output.
@@ -416,6 +429,23 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
             # one by one
             sink.addFeature(path_feature, QgsFeatureSink.FastInsert)
             ID += 1
+
+        # We display the warning messages about the thresholds
+        if len(errorMessages) > 0:
+            above = 0
+            below = 0
+            for errorMessage in errorMessages:
+                if errorMessage == "Above":
+                    above += 1
+                elif errorMessage == "Below":
+                    below += 1
+            feedback.pushInfo(
+                self.tr("WARNING : There were " + str(below) + " situations where the value of a pixel was under"
+                                                               " the lowest threshold given as a parameter; and " + str(
+                    above) + " when it was above the"
+                             " highest. In those cases, the lowest or highest value of the parameter range was used."
+                             " To avoid that, please make sure to use thresholds that cover all of the range of values in"
+                             " your rasters."))
 
         return {self.OUTPUT: dest_id}
 
@@ -504,6 +534,77 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
 
 # Methods to help the algorithm; all static, do not need to initialize an object of this class.
 class RoadTypeDeterminationHelper:
+
+    @staticmethod
+    def CollapsedTableToMatrix(matrixOfThresholds, numberOfColumns):
+        """This function exist to counter the fact that QGIS collapses the matrix of parameters into a list. It puts
+        it back into a proper matrix, meaning a list of lists. It also transforms the strings in the matrix into numbers
+        where needed."""
+
+        numberOfRows = len(matrixOfThresholds) // numberOfColumns
+        matrixToReturn = list()
+
+        for indexing in range(numberOfRows):
+            matrixToReturn.append(
+                matrixOfThresholds[(indexing * numberOfColumns):(indexing * numberOfColumns + numberOfColumns)])
+
+        # We convert only the threshold values into floats; the last value of each line is the road type as a string.
+        for index in range(len(matrixToReturn)):
+            matrixToReturn[index][0] = float(matrixToReturn[index][0])
+            matrixToReturn[index][1] = float(matrixToReturn[index][1])
+
+        return matrixToReturn
+
+    @staticmethod
+    def CheckThresholds(matrixOfThresholds, thresholdsName):
+        """This function check if there are no holes in threshold parameters, and if every lower threshold is inferior
+        to the associated upper threshold. If not, we raise an exception."""
+
+        for index in range(len(matrixOfThresholds)):
+            lowerThreshold = matrixOfThresholds[index][0]
+            upperThreshold = matrixOfThresholds[index][1]
+            if lowerThreshold >= upperThreshold:
+                raise QgsProcessingException("ERROR: For the parameter " + str(thresholdsName) + ", the lower threshold of"
+                                            " row " + str(index) + " is bigger or equal to the upper threshold of the same row."
+                                            " Please, correct it before trying again.")
+            if (index + 1) < len(matrixOfThresholds):
+                lowerThresholdOfHigherRow = matrixOfThresholds[index + 1][0]
+                if (lowerThresholdOfHigherRow - upperThreshold) != 0:
+                    raise QgsProcessingException(
+                        "ERROR: For the parameter " + str(thresholdsName) + ", there is a hole between the upper threshold of"
+                        " row " + str(index) + " and the lower threshold of row " + str(index+1) + ". The thresholds must"
+                        " be continuous and ordered from smaller to higher. Please, correct it before trying again.")
+
+    @staticmethod
+    def GetThresholdValue(matrixOfThresholds, valueInsideThresholds):
+        """This function gets the associated value (additional value or multiplicative value) inside a matrix of thresholds
+        (third column) given a value that will be inside one of the thresholds. Is also register error messages to warn
+        the user about values that are not into its thresholds."""
+
+        thresholdValue = None
+        errorMessage = None
+
+        # First, we treat the case of our value being under the lowest threshold, or higher than the highest threshold.
+        if valueInsideThresholds < matrixOfThresholds[0][0]:
+            thresholdValue = matrixOfThresholds[0][2]
+            errorMessage = "Below"
+        elif valueInsideThresholds > matrixOfThresholds[len(matrixOfThresholds) - 1][1]:
+            thresholdValue = matrixOfThresholds[len(matrixOfThresholds) - 1][2]
+            errorMessage = "Above"
+        else:
+            for index in range(len(matrixOfThresholds)):
+                if valueInsideThresholds >= matrixOfThresholds[index][0] and valueInsideThresholds < \
+                        matrixOfThresholds[index][1]:
+                    thresholdValue = matrixOfThresholds[index][2]
+                    break
+
+        if thresholdValue is None:
+            raise QgsProcessingException(
+                "ERROR: Couldn't find value " + str(valueInsideThresholds) + " in the following"
+                                                                             " matrix of thresholds : " + str(
+                    matrixOfThresholds))
+        else:
+            return thresholdValue, errorMessage
 
     @staticmethod
     def SortWithPriorityPolygons(listOfLines, priorityPolygons, priorityFieldIndex):
