@@ -658,9 +658,13 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
          
           - Roads to connect the polygons to access to: Layer that contains the roads to connect the polygons to.
           
-          - Network generation type: a parameter indicating what type of heuristic is used to generate the network. Random cell order, farther cells from current roads first, closer cells from curent roads first.
-          
           - Skidding distance. Maximum distance that a cell can be to not need a road going up to it.
+          
+          - Method of generation : a parameter indicating what type of heuristic is used to generate the network. Random cell order, farther cells from current roads first, closer cells from curent roads first.
+          
+          - Attribute containing an heuristic : An attribute field of the polygons that contains an heuristic that describe in which order the algorithm should reach them. The lower the value, the higher the priority; this way, the heuristic can be a date or a time. It is combined with the heuristic chosen before by the user to determine the order in which pixels are accessed a single polygon.
+         
+          - Punishment of angles : The algorithm can "punish" the use of steep angle between a pixel and another by increasing the cost when it is used to allow for smoother lines. Remember that this does not affect the angle of connection between the roads, but only the zigzags in each road.
          
         """)
 

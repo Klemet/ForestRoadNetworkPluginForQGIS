@@ -668,6 +668,8 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
           - Fine water cost : The cost of building a culvert. It will be added to the cost of building a road on the given pixel.
           
           - Soil raster : A raster directly containing an additional cost of building a road on this pixel due to the soil of the pixel. It can represent the added cost of having to bring gravel from afar.
+        
+          - Additional cost raster : A raster containing additional cost to avoid certain areas in particular. Examples can be particular fauna habitats, the edge of lakes, etc.        
         """)
 
     def shortDescription(self):

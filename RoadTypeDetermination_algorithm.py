@@ -508,16 +508,17 @@ class roadTypeAlgorithm(QgsProcessingAlgorithm):
           - Road Network : a forest road network with an attribute field corresponding to the wood flux going to each of the line of network.
           
           - Flux field : The attribute field of the road network layer containing the information about the wood flux going through the lines.
+          
+          - Types of roads to use : A table describing the different type or classes of roads to define in the network, with a upper and a lower threshold of wood volume for each. Thresholds should have have any hole between them, and should be ordered in an increasing manner.
+
+          - Name of the type of road that can be made temporary : A name corresponding to one of the type or class of roads indicated before that could be transformed into temporary roads. If nothing is entered, no temporary roads will be created.
+            
+          - Percentage of temporary roads that can be accommodated as temporary roads (e.g. winter roads) : straight-forward.
 
           - Polygons that will indicates the zones where temporary roads can be built (optional) : straight-forward.
 
           - Attribute field of the previous polygon layer defining in which polygon should the temporary roads be build first (optional) : the higher the number, the higher the priority will be. If no priority polygons or fields are indicated, then the algorithm will prioritize small roads for becoming temporary.
-
-          - Threshold of wood flux under which a forest road will be a tertiary road, and over it a secondary road : straight-forward.
-          
-          - Threshold of wood flux under which a forest road will be a secondary road, and over it a primary road : straight-forward.
-          
-          - Percentage of temporary roads that can be accommodated as temporary roads (e.g. winter roads) : straight-forward.
+ 
         """)
 
     def shortDescription(self):
