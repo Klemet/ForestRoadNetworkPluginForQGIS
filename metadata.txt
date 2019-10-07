@@ -11,7 +11,7 @@ name=Forest Roads Network
 qgisMinimumVersion=3.0
 description=A plugin to create a vectorial network of forest roads of different types according to the flux of timber going through them.
 about=This plugin contains several algorithms to allow the user to simply create a forest road network optimized in space to reduce construction costs. However, remember that it is not made for operational road planning, but rather strategical planning or theoretical exercises. A first algorithm creates the network using a cost raster; the second determine how the wood will flow throught the network. The third determine the type of forest road (primary, secondary, etc.) according to those flux of wood and zones where temporary roads must be prioritized.
-version=1.5
+version=1.6
 author=Clément Hardy
 email=clem.hardy@outlook.fr
 
@@ -33,6 +33,12 @@ changelog=1.0 - First stable version
 				Wood Flux Determination algorithm now accepts non-splitted lines
 				and non-multipoints layers; it also can use information about quantity
 				of wood contained inside fields attributes of the harvested polygons
+		  1.6 - No more warning messages during the algorithm's process
+		        Cost Raster Creator algorithm can now use an additional cost raster for more flexibility
+				Cost Raster Creator algorithm now uses ranges of parameters for more flexibility 
+				Forest Road Network Creation algorithm can now use a heuristic contained in a attribute of the polygons to access
+				Road Type Determination algorithm can now use any type of roads defined by the user
+				Road Type Determination algorithm can now restrict the zones where temporary roads can be made
 
 # Tags are comma separated with spaces allowed
 tags=least cost path distance raster analysis road
