@@ -104,6 +104,8 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
 
     SOIL_RASTER = 'SOIL_RASTER'
 
+    ADDITIONAL_COST_RASTER = 'ADDITIONAL_COST_RASTER'
+
     OUTPUT = 'OUTPUT'
 
     def initAlgorithm(self, config):
@@ -212,6 +214,14 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterRasterLayer(
                 self.SOIL_RASTER,
                 self.tr('Soil raster'),
+                optional=True
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterRasterLayer(
+                self.ADDITIONAL_COST_RASTER,
+                self.tr('Additional cost raster to avoid certain areas (e.g. sensitive flora or fauna zones, etc.)'),
                 optional=True
             )
         )
@@ -366,6 +376,19 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
         else:
             soil_raster = None
 
+        if self.parameterAsRasterLayer(
+            parameters,
+            self.ADDITIONAL_COST_RASTER,
+            context
+        ):
+            special_raster = self.parameterAsRasterLayer(
+                parameters,
+                self.ADDITIONAL_COST_RASTER,
+                context
+            )
+        else:
+            special_raster = None
+
         feedback.pushInfo(self.tr("Checking inputs..."))
         # If source was not found, throw an exception to indicate that the algorithm
         # encountered a fatal error. The exception text can be any string, but in this
@@ -388,6 +411,8 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
             listOfRastersToCheck.append(fine_water_raster)
         if soil_raster is not None:
             listOfRastersToCheck.append(soil_raster)
+        if special_raster is not None:
+            listOfRastersToCheck.append(special_raster)
 
         if len(listOfRastersToCheck) == 0:
             raise QgsProcessingException(self.tr("At least one input raster is needed ! Please, input one raster."))
@@ -434,6 +459,11 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
         else:
             soil_raster_block = None
 
+        if special_raster is not None:
+            special_raster_block = CostRasterCreatorHelper.get_all_block(special_raster)
+        else:
+            special_raster_block = None
+
         feedback.pushInfo(self.tr("Preparing output..."))
         # We set the output to be ready : It is a QgsDataProvider
         outputFile = self.parameterAsOutputLayer(parameters, self.OUTPUT, context)
@@ -444,12 +474,8 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
         rows = max([math.ceil(extent.height() / listOfRastersToCheck[0].rasterUnitsPerPixelY()), 1.0])
         cols = max([math.ceil(extent.width() / listOfRastersToCheck[0].rasterUnitsPerPixelX()), 1.0])
         # We will need this value for the fine water computation later
-        pixelDiagonal = sqrt(listOfRastersToCheck[0].rasterUnitsPerPixelY()**2 +
-                             listOfRastersToCheck[0].rasterUnitsPerPixelX()**2)
         pixelSide = (listOfRastersToCheck[0].rasterUnitsPerPixelY() +
                              listOfRastersToCheck[0].rasterUnitsPerPixelX()) / 2
-        # cols = listOfRastersToCheck[0].width()
-        # rows = listOfRastersToCheck[0].height()
 
         writer = QgsRasterFileWriter(outputFile)
         writer.setOutputProviderKey('gdal')
@@ -502,6 +528,8 @@ class CostRasterAlgorithm(QgsProcessingAlgorithm):
                     if soil_raster_block is not None:
                         finalValue += soil_raster_block.value(y, x)
                         # feedback.pushInfo("After soils, final value is " + str(finalValue))
+                    if special_raster_block is not None:
+                        finalValue += special_raster_block.value(y, x)
                     # Then the coarse elevation value
                     if coarse_elevation_raster_block is not None:
                         additionalValue, errorMessage = CostRasterCreatorHelper.CalculateCoarseElevationCost(y,
@@ -700,9 +728,9 @@ class CostRasterCreatorHelper:
                     if raster_layer.width() != another_raster_layer.width():
                         raise QgsProcessingException("ERROR: The input rasters have different widths.")
                     if raster_layer.rasterUnitsPerPixelX() != another_raster_layer.rasterUnitsPerPixelX():
-                        raise QgsProcessingException("ERROR: The input rasters have different rasterUnitsPerPixelX.")
+                        raise QgsProcessingException("ERROR: The input rasters have different horizontal resolution.")
                     if raster_layer.rasterUnitsPerPixelY() != another_raster_layer.rasterUnitsPerPixelY():
-                        raise QgsProcessingException("ERROR: The input rasters have different rasterUnitsPerPixelY.")
+                        raise QgsProcessingException("ERROR: The input rasters have different vertical resolution.")
 
     @staticmethod
     def CheckThresholds(matrixOfThresholds, thresholdsName):
