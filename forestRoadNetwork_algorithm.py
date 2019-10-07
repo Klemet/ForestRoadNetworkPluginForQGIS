@@ -51,6 +51,7 @@ from qgis.core import (
     QgsProcessingParameterFeatureSource,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterRasterLayer,
+    QgsProcessingParameterField,
     QgsProcessingParameterBand,
     QgsProcessingParameterBoolean,
     QgsProcessingParameterNumber,
@@ -84,16 +85,27 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
     # calling from the QGIS console.
 
     INPUT_COST_RASTER = 'INPUT_COST_RASTER'
+
     INPUT_RASTER_BAND = 'INPUT_RASTER_BAND'
+
     INPUT_POLYGONS_TO_ACCESS = 'INPUT_POLYGONS_TO_ACCESS'
+
     INPUT_ROADS_TO_CONNECT_TO = 'INPUT_ROADS_TO_CONNECT_TO'
-    # BOOLEAN_OUTPUT_LINEAR_REFERENCE = 'BOOLEAN_OUTPUT_LINEAR_REFERENCE'
+
     SKIDDING_DISTANCE = 'SKIDDING_DISTANCE'
+
     METHOD_OF_GENERATION = 'METHOD_OF_GENERATION'
+
+    HEURISTIC_IN_POLYGONS = 'HEURISTIC_IN_POLYGONS'
+
     ANGLES_CONSIDERED = 'ANGLES_CONSIDERED'
+
     PUNISHER_45DEGREES = 'PUNISHER_45DEGREES'
+
     PUNISHER_90DEGREES = 'PUNISHER_90DEGREES'
+
     PUNISHER_135DEGREES = 'PUNISHER_135DEGREES'
+
     OUTPUT = 'OUTPUT'
 
     def initAlgorithm(self, config):
@@ -150,6 +162,16 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
                 self.tr('Method of generation of the road network'),
                 ['Random', 'Closest first', 'Farthest first'],
                 defaultValue=1
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterField(
+                self.HEURISTIC_IN_POLYGONS,
+                self.tr('Attribute field of the harvest polygons that indicates the order in which they must be reached'),
+                parentLayerParameterName=self.INPUT_POLYGONS_TO_ACCESS,
+                type=QgsProcessingParameterField.Numeric,
+                optional=True
             )
         )
 
@@ -241,6 +263,20 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
             self.METHOD_OF_GENERATION,
             context
         )
+
+        if self.parameterAsString(
+                    parameters,
+                    self.HEURISTIC_IN_POLYGONS,
+                    context
+                ) is not None:
+            heuristic_in_polygons_index = polygons_to_connect.fields().lookupField(
+                self.parameterAsString(
+                    parameters,
+                    self.HEURISTIC_IN_POLYGONS,
+                    context
+                ))
+        else:
+            heuristic_in_polygons_index = None
 
         if self.parameterAsString(
             parameters,
@@ -349,7 +385,9 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         polygons_to_reach_features = list(polygons_to_connect.getFeatures())
         # feedback.pushInfo(str(len(start_features)))
         # We make a set of nodes to reach.
-        set_of_nodes_to_reach = MinCostPathHelper.features_to_row_cols(polygons_to_reach_features, cost_raster)
+        set_of_nodes_to_reach, heuristicDictionnary = MinCostPathHelper.features_to_row_cols(polygons_to_reach_features,
+                                                                                            heuristic_in_polygons_index,
+                                                                                            cost_raster)
         # If there are no nodes to reach (e.g. all polygons are out of the raster)
         if len(set_of_nodes_to_reach) == 0:
             raise QgsProcessingException(self.tr("ERROR: There is no polygon to reach in this raster. Check if some"
@@ -360,7 +398,9 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         # We do another set concerning the nodes that contains roads to connect to
         roads_to_connect_to_features = list(current_roads.getFeatures())
         # feedback.pushInfo(str(len(end_features)))
-        set_of_nodes_to_connect_to = MinCostPathHelper.features_to_row_cols(roads_to_connect_to_features, cost_raster)
+        set_of_nodes_to_connect_to, uselessHeuristicDictionary = MinCostPathHelper.features_to_row_cols(roads_to_connect_to_features,
+                                                                                                        None,
+                                                                                                        cost_raster)
         # If there is no nodes to connect to, throw an exception
         if len(set_of_nodes_to_connect_to) == 0:
             raise QgsProcessingException(self.tr("ERROR: There is no road to connect to in this raster. Check if some"
@@ -423,11 +463,20 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
 
             # We then sort according to this distance, in increasing or decreasing order.
             if method_of_generation == '1':
-                list_of_nodes_to_reach_with_order.sort()
+                # We sort the list by the heuristic inside the polygons, AND the main heuristic.
+                list_of_nodes_to_reach_with_order = sorted(list_of_nodes_to_reach_with_order,
+                                                           key=lambda tuple: (heuristicDictionnary[tuple[1]],
+                                                                              tuple[0]))
+                # list_of_nodes_to_reach_with_order.sort()
                 feedback.pushInfo("Ordering towards closest cells to visit...")
             else:
                 feedback.pushInfo("Ordering towards farthest cells to visit...")
-                list_of_nodes_to_reach_with_order.sort(reverse=True)
+                # Here, we take the opposite of the distance so that it respects the "smallest first" sorting, but
+                # in the opposite way to select the farthest first.
+                list_of_nodes_to_reach_with_order = sorted(list_of_nodes_to_reach_with_order,
+                                                           key=lambda tuple: (heuristicDictionnary[tuple[1]],
+                                                                              -tuple[0]))
+                # list_of_nodes_to_reach_with_order.sort(reverse=True)
 
             feedback.pushInfo("Ordering is done !")
 
@@ -439,6 +488,7 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
 
         # First, we have to initialize some things.
         feedbackProgress = 0
+        errorMessages = 0
         listOfResults = list()
         pointsToReach = set()
         for node in set_of_nodes_to_connect_to:
@@ -496,14 +546,8 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
                         if feedback.isCanceled():
                             raise QgsProcessingException(self.tr("ERROR: Search canceled."))
                         else:
-                            pointToReach = MinCostPathHelper._row_col_to_point(nodeToReach, cost_raster)
-                            feedback.pushInfo(self.tr("WARNING : The end-points are not reachable from start-point" +
-                                                      pointToReach.toString() + ". It might be because the point is in"
-                                                      + "a no-value pixel, or because it is surrounded by no-value pixels."
-                                                      + "Please check your cost raster."))
-                            # raise QgsProcessingException(
-                                # self.tr("ERROR: The end-point(s) is not reachable from start-point (" + nodeToReach[1] +
-                                        # ", " + nodeToReach[2] + ")."))
+                            errorMessages += 1
+
                     # If there wasn't a problem, we save the results
                     else:
                         # When the road is done by the Dijkstra algorithm, we put the path and the cost
@@ -525,7 +569,7 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
         # For every path we create, we save it as a line and put it into the sink !
         ID = 1
         for (path, cost) in listOfResults:
-            feedback.pushInfo("Cost of feature saved : " + str(cost))
+            # feedback.pushInfo("Cost of feature saved : " + str(cost))
             # Time to save the path as a vector.
             # We take the starting and ending points as pointXY
             start_point = MinCostPathHelper._row_col_to_point(path[0], cost_raster)
@@ -539,6 +583,13 @@ class ForestRoadNetworkAlgorithm(QgsProcessingAlgorithm):
             # one by one
             sink.addFeature(path_feature, QgsFeatureSink.FastInsert)
             ID += 1
+
+        # We display the error messages if there was some
+        if errorMessages > 0:
+            feedback.pushInfo("WARNING : During the pathfinding, there was " + str(errorMessages) + " cases were a road could not"
+                              " be constructed to a certain point to reach in a harvested polygon. When this happens, it's often due to"
+                              " the cost raster containing No Data pixels that the algorithm cannot cross. Please, check"
+                              " your cost raster and and change the No Data pixels if needed.")
 
         # When all is done, we return our output that is linked to the sink.
         return {self.OUTPUT: dest_id}
@@ -800,45 +851,62 @@ class MinCostPathHelper:
     # Method to transform given features into a set of
     # nodes (row + column) on the raster.
     # Features have to be lines or polygons.
+    # Also return a dictionary containing the heuristic read in the polygon or line
+    # for use in ordering the nodes to reach.
     @staticmethod
-    def features_to_row_cols(given_features, raster_layer):
+    def features_to_row_cols(given_features, heuristic_index, raster_layer):
 
         row_cols = set()
+        heuristic_dictionary = dict()
         # extent = raster_layer.dataProvider().extent()
         # if extent.isNull() or extent.isEmpty:
         #     return list(col_rows)
 
         for given_feature in given_features:
             if given_feature.hasGeometry():
-                given_feature = given_feature.geometry()
+                given_feature_geom = given_feature.geometry()
+
+                if heuristic_index is not None:
+                    attributes = given_feature.attributes()
+                    heuristic = attributes[heuristic_index]
+                else:
+                    heuristic = 0
 
                 # Case of multipolygons
-                if given_feature.wkbType() == QgsWkbTypes.MultiPolygon:
-                    multi_polygon = given_feature.asMultiPolygon()
+                if given_feature_geom.wkbType() == QgsWkbTypes.MultiPolygon:
+                    multi_polygon = given_feature_geom.asMultiPolygon()
                     for polygon in multi_polygon:
                         row_cols_for_this_polygon = MinCostPathHelper._polygon_to_row_col(polygon, raster_layer)
                         row_cols.update(row_cols_for_this_polygon)
+                        for row_col in row_cols_for_this_polygon:
+                            heuristic_dictionary[row_col] = heuristic
 
                 # Case of polygons
-                elif given_feature.wkbType() == QgsWkbTypes.Polygon:
-                    given_feature = given_feature.asPolygon()
-                    row_cols_for_this_polygon = MinCostPathHelper._polygon_to_row_col(given_feature, raster_layer)
+                elif given_feature_geom.wkbType() == QgsWkbTypes.Polygon:
+                    polygon = given_feature_geom.asPolygon()
+                    row_cols_for_this_polygon = MinCostPathHelper._polygon_to_row_col(polygon, raster_layer)
                     row_cols.update(row_cols_for_this_polygon)
+                    for row_col in row_cols_for_this_polygon:
+                        heuristic_dictionary[row_col] = heuristic
 
                 # Case of multi lines
-                elif given_feature.wkbType() == QgsWkbTypes.MultiLineString:
-                    multi_line = given_feature.asMultiPolyline()
+                elif given_feature_geom.wkbType() == QgsWkbTypes.MultiLineString:
+                    multi_line = given_feature_geom.asMultiPolyline()
                     for line in multi_line:
                         row_cols_for_this_line = MinCostPathHelper._line_to_row_col(line, raster_layer)
                         row_cols.update(row_cols_for_this_line)
+                        for row_col in row_cols_for_this_line:
+                            heuristic_dictionary[row_col] = heuristic
 
                 # Case of lines
-                elif given_feature.wkbType() == QgsWkbTypes.LineString:
-                    given_feature = given_feature.asPolyline()
-                    row_cols_for_this_line = MinCostPathHelper._line_to_row_col(given_feature, raster_layer)
+                elif given_feature_geom.wkbType() == QgsWkbTypes.LineString:
+                    line = given_feature_geom.asPolyline()
+                    row_cols_for_this_line = MinCostPathHelper._line_to_row_col(line, raster_layer)
                     row_cols.update(row_cols_for_this_line)
+                    for row_col in row_cols_for_this_line:
+                        heuristic_dictionary[row_col] = heuristic
 
-        return row_cols
+        return row_cols, heuristic_dictionary
 
     # Function that get the data block from a entire raster for a given band
     @staticmethod
