@@ -101,10 +101,11 @@ The user must also indicate thresholds of wood flux to select the right road typ
 
 Mail : clem.hardy@outlook.fr
 
-
+The work that allowed the creation of this module was fonded by the [Ministry of Forests, Fauna and Parcs of Québec](https://mffp.gouv.qc.ca/)
 
 ## Acknowledgments
 
 The basis for the code have been shamelessly taken from the work available on this repository : https://github.com/Gooong/LeastCostPath
-
 A big thanks to their team for creating such a clean code that allowed me to gain a lot of time.
+
+Another big thanks to the [Ministry of Forests, Fauna and Parcs of Québec](https://mffp.gouv.qc.ca/) for allowing me to work on this interesting subject.
