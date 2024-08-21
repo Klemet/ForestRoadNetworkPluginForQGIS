@@ -106,6 +106,12 @@ The user must also indicate thresholds of wood flux to select the right road typ
 ![Result](Test_data/images/RoadTypeDetermination_Result.png)
 
 
+## ⁉ Questions and answers
+
+- **I've tried to use the plugin, but it says things like "No polygons in the raster" or "No roads in the raster" ?**
+
+See [this issue](https://github.com/Klemet/ForestRoadNetworkPluginForQGIS/issues/2); it's surely that your polygons/lines have a special geometry type with a third coordinate that the algorithm doesn't like. Try to transform it into regular polygons/lines with the `Drop M/Z values` tools of the QGIS processing toolbox.
+
 ## ✒️ Author
 
 [Clément Hardy - PhD Student at the Université du Québec à Montréal](http://www.cef-cfr.ca/index.php?n=Membres.ClementHardy)
